@@ -6,7 +6,7 @@
 
 ## Current MVP
 
-The current Rust rebuild provides a native workspace with a `vdb-core` library and `vdb` CLI. It uses an append-only, length-prefixed CBOR log, an in-memory document index, optimistic document versions, bounded equality queries, schema reports, health metrics, and snapshot manifests.
+The current Rust rebuild provides a native workspace with a `vdb-core` library and `vdb` CLI. It uses a versioned `VDB1` header, an append-only, length-prefixed CBOR log, per-record SHA-256 checksums, an in-memory document index, optimistic document versions, bounded equality queries, schema reports, health metrics, verified backups, and snapshot manifests. Startup acquires the per-instance lock before header creation, and compaction rotates the WAL through a synchronized same-directory temporary file rather than rewriting the active file in place.
 
 The Steward is currently deterministic and read-only. It reports safe findings rather than executing model-generated commands. A future local/private model may explain findings, but all changes must pass typed validation, policy, approval, and verification.
 
@@ -38,7 +38,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build --release
 ```
 
-The development sandbox may use a locally vendored Debian Rust registry, while GitHub Actions resolves dependencies from the standard crates.io registry. The repository intentionally does not commit a mirror-specific lockfile until an authentic crates.io lockfile can be generated.
+The development sandbox may use a locally vendored Debian Rust registry, while GitHub Actions resolves dependencies from the standard crates.io registry. The repository intentionally does not commit a mirror-specific lockfile until an authentic crates.io lockfile can be generated; the release target is a clean crates.io lockfile with locked CI builds. See [`docs/improvement-plan.md`](docs/improvement-plan.md) for the ranked next steps.
 
 ## User experience
 
@@ -60,7 +60,7 @@ A new VDB instance is local-first. The design uses bounded document and query si
 
 ## Status and limitations
 
-This is an MVP and not yet a production database. The current implementation uses an in-memory state map rebuilt from the versioned, checksummed WAL. It provides a single-process instance lock, JSON Lines export/import, lightweight single-field equality indexes, and safe WAL compaction. It does not yet provide encryption-at-rest, replication, or a network server. Those are deliberate follow-on milestones, not hidden guarantees.
+This is an MVP and not yet a production database. The current implementation uses an in-memory state map rebuilt from the versioned, checksummed WAL. It provides a single-process lock file, JSON Lines export/import, lightweight single-field equality indexes, verified backups, and atomic-path WAL compaction. It does not yet provide encryption at rest, authenticated encryption, OS-level advisory locks, memory-bounded storage, a query planner, replication, or a network server. A lock file can remain after an abnormal process exit, and filesystem replacement durability is platform-dependent. These are deliberate follow-on milestones, not hidden guarantees.
 
 ## License
 

@@ -9,6 +9,8 @@ cargo run --release -- init --path ./data/app.vdb
 cargo run --release -- --path ./data/app.vdb collections create users
 ```
 
+VDB acquires a per-instance `.lock` file before creating or validating a new database header. This prevents ordinary concurrent opens of the same path, including the first-open race. The lock file is not yet an OS advisory lock and may remain after a crash; do not delete it automatically unless you have confirmed that no VDB process is using the database. Record the incident and follow the stale-lock recovery procedure agreed for the deployment.
+
 ## Health check
 
 ```bash
@@ -33,7 +35,7 @@ The current index implementation is single-field and equality-oriented. It is re
 vdb --path ./data/app.vdb compact
 ```
 
-Compaction preserves current documents and index definitions, but it should still be followed by a backup and health check.
+Compaction is serialized with writes. It writes a same-directory temporary WAL, synchronizes that file, closes the active handle, atomically replaces the database path, and reopens the append handle. It preserves current documents and index definitions. The temporary path includes the process ID and may need inspection or cleanup after an interrupted operation. Because filesystem directory-entry durability and replacement behavior vary, compaction should still be followed by a backup and health check.
 
 ## Backup
 
@@ -44,22 +46,22 @@ vdb --path ./data/app.vdb backup ./backups/app.vdb
 vdb --path ./data/app.vdb backup-verify ./backups/app.vdb
 ```
 
-A verified backup is one whose manifest checksum and byte count match and whose contents can be replayed by VDB. Production deployments should copy verified backups to a separate storage failure domain and perform scheduled restore drills.
+A verified backup is one whose manifest checksum and byte count match and whose contents can be replayed by VDB. The backup command serializes with writes and compaction, synchronizes the source WAL before copying, and writes a separate manifest. Production deployments should copy verified backups to a separate storage failure domain, use collision-safe destinations, protect the manifest with the backup, and perform scheduled restore drills into a new path.
 
 ## Recovery
 
-If VDB reports a checksum mismatch, stop writes to the affected file, preserve the original file and logs, and restore the newest verified backup into a separate path. Do not delete or overwrite the original until the recovery result has been reviewed.
+If VDB reports a checksum mismatch, stop writes to the affected file, preserve the original and logs, and restore the newest verified backup into a separate path. Do not delete or overwrite the original until the recovery result has been reviewed.
 
-If the file ends with an incomplete record, the MVP truncates the incomplete tail during replay. This behavior is intended for process interruption at the end of a write. A complete record with a checksum mismatch fails closed and requires recovery.
+If the file ends with an incomplete record, the MVP truncates the incomplete tail during replay. This behavior is intended for process interruption at the end of a write. A complete record with a checksum mismatch fails closed and requires recovery. If compaction leaves a `.compact.<pid>.tmp` file, first verify that no VDB process is active, preserve it for incident analysis if needed, and remove it only after the database path and backup have been validated.
 
 ## Resource limits
 
-The MVP limits documents to 1 MiB by default and queries to 1–1000 results. These are conservative defaults. Operators should monitor WAL growth, document count, payload bytes, disk usage, process memory, and restart replay time.
+The MVP limits documents to 1 MiB by default and queries to 1–1000 results. These are conservative defaults. Operators should monitor WAL growth, document count, payload bytes, disk usage, process memory, and restart replay time. The complete working set and equality indexes are currently held in memory, so this MVP is not suitable for datasets larger than the available memory budget.
 
 ## Current limitations
 
-The MVP does not yet provide encryption at rest, network serving, replication, authentication, or production-grade key management. The local implementation does provide a single-process instance lock, secondary equality indexes, WAL compaction, and versioned/checksummed records. Do not deploy it for critical data until encryption, authentication, server isolation, and the recovery test program are implemented and reviewed.
+The MVP does not yet provide encryption at rest, authenticated encryption, network serving, replication, authentication, production-grade key management, OS-level advisory locks, memory-bounded storage, a query planner, or a model-backed Steward. The local implementation does provide a single-process lock file, secondary equality indexes, bounded queries, checksummed/versioned records, WAL compaction, backup verification, and JSON Lines portability. Do not deploy it for critical data until encryption, lock semantics, server isolation, crash testing, dependency auditing, and the recovery program are implemented and reviewed.
 
 ## Incident record
 
-For every incident, record the database version, operating system, file checksum, WAL size, last verified backup, failing command, error text, affected collection, and recovery steps. Do not include secrets or raw sensitive documents in issue reports.
+For every incident, record the database version, operating system, filesystem, file checksum, WAL size, last verified backup, failing command, error text, affected collection, temporary files found, and recovery steps. Do not include secrets or raw sensitive documents in issue reports.

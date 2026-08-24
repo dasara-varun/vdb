@@ -46,6 +46,8 @@ pub enum VdbError {
     InstanceLocked(PathBuf),
     #[error("unsupported or corrupt VDB file format")]
     UnsupportedFormat,
+    #[error("storage handle is unavailable")]
+    StorageUnavailable,
     #[error("serialization error: {0}")]
     Serialization(String),
 }
@@ -265,13 +267,12 @@ impl VdbStore {
             collection: collection.to_string(),
             document: document.clone(),
         })?;
-        self.state
-            .write()
+        let mut state = self.state.write();
+        state
             .collections
             .get_mut(collection)
-            .expect("collection checked before write")
+            .ok_or_else(|| VdbError::CollectionNotFound(collection.to_string()))?
             .insert(document.id.clone(), document.clone());
-        let mut state = self.state.write();
         refresh_document_indexes(&mut state, collection, current.as_ref(), &document);
         Ok(document)
     }
@@ -316,7 +317,7 @@ impl VdbStore {
         let documents: Vec<_> = state
             .collections
             .get(collection)
-            .expect("collection checked before index")
+            .ok_or_else(|| VdbError::CollectionNotFound(collection.to_string()))?
             .values()
             .cloned()
             .collect();
@@ -366,7 +367,7 @@ impl VdbStore {
         let collection_documents = state
             .collections
             .get(collection)
-            .expect("collection checked before query");
+            .ok_or_else(|| VdbError::CollectionNotFound(collection.to_string()))?;
         let candidate_ids = where_filter.and_then(|filter| {
             state.indexes.get(collection).and_then(|indexes| {
                 filter.iter().find_map(|(field, expected)| {
@@ -418,7 +419,7 @@ impl VdbStore {
             .write()
             .collections
             .get_mut(collection)
-            .expect("collection checked before delete")
+            .ok_or_else(|| VdbError::CollectionNotFound(collection.to_string()))?
             .remove(document_id);
         let mut state = self.state.write();
         remove_document_from_indexes(&mut state, collection, &current);
@@ -489,7 +490,7 @@ impl VdbStore {
             let mut documents: Vec<_> = state
                 .collections
                 .get(&collection)
-                .expect("collection exists")
+                .ok_or_else(|| VdbError::CollectionNotFound(collection.clone()))?
                 .values()
                 .cloned()
                 .collect();
@@ -553,7 +554,7 @@ impl VdbStore {
             let mut documents: Vec<_> = state
                 .collections
                 .get(&collection)
-                .expect("collection exists")
+                .ok_or_else(|| VdbError::CollectionNotFound(collection.clone()))?
                 .values()
                 .cloned()
                 .collect();
@@ -601,7 +602,7 @@ impl VdbStore {
         self.wal
             .lock()
             .as_mut()
-            .expect("WAL handle is available while store is open")
+            .ok_or(VdbError::StorageUnavailable)?
             .sync_data()?;
         let destination = destination.as_ref().to_path_buf();
         if let Some(parent) = destination.parent() {
@@ -618,7 +619,9 @@ impl VdbStore {
             created_at: Utc::now(),
         };
         let manifest_path = PathBuf::from(format!("{}.manifest.json", destination.display()));
-        fs::write(manifest_path, serde_json::to_vec_pretty(&manifest).unwrap())?;
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest)
+            .map_err(|error| VdbError::Serialization(error.to_string()))?;
+        fs::write(manifest_path, manifest_bytes)?;
         Ok(manifest)
     }
 
@@ -656,9 +659,7 @@ impl VdbStore {
 
     fn append(&self, record: &WalRecord) -> Result<(), VdbError> {
         let mut wal = self.wal.lock();
-        let wal = wal
-            .as_mut()
-            .expect("WAL handle is available while store is open");
+        let wal = wal.as_mut().ok_or(VdbError::StorageUnavailable)?;
         write_wal_record(wal, record)?;
         wal.sync_data()?;
         Ok(())
@@ -862,7 +863,10 @@ fn replay_wal(path: &Path) -> Result<State, VdbError> {
     let mut offset = FILE_HEADER_LEN;
     let mut valid_end = FILE_HEADER_LEN;
     while offset + 4 <= bytes.len() {
-        let length = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        let length_bytes: [u8; 4] = bytes[offset..offset + 4]
+            .try_into()
+            .map_err(|_| VdbError::UnsupportedFormat)?;
+        let length = u32::from_le_bytes(length_bytes) as usize;
         if length > MAX_WAL_RECORD_BYTES || offset + 4 + length + 32 > bytes.len() {
             break;
         }
@@ -997,6 +1001,20 @@ mod tests {
     }
 
     #[test]
+    fn locked_new_path_is_not_created() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("new.vdb");
+        let lock_path = PathBuf::from(format!("{}.lock", path.display()));
+        std::fs::write(lock_path, b"pid=someone-else\n").unwrap();
+        let error = match VdbStore::open(&path) {
+            Ok(_) => panic!("locked path unexpectedly opened"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, VdbError::InstanceLocked(_)));
+        assert!(!path.exists());
+    }
+
+    #[test]
     fn checksum_mismatch_requires_recovery() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("data.vdb");
@@ -1067,6 +1085,16 @@ mod tests {
             reopened.list_indexes("events").unwrap()[0].indexed_documents,
             20
         );
+        let inserted = reopened
+            .put(
+                "events",
+                "e20",
+                serde_json::json!({"kind": "logout", "n": 20}),
+                None,
+            )
+            .unwrap();
+        assert_eq!(inserted.version, 1);
+        assert_eq!(reopened.query("events", None, 100).unwrap().len(), 21);
     }
 
     #[test]
