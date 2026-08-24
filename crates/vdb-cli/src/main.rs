@@ -269,8 +269,8 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Restore { source, destination }
-                if source == PathBuf::from("backup.vdb")
-                    && destination == PathBuf::from("restored.vdb")
+                if source.as_path() == std::path::Path::new("backup.vdb")
+                    && destination.as_path() == std::path::Path::new("restored.vdb")
         ));
     }
 }
