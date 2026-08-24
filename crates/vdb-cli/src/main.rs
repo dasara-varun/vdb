@@ -7,8 +7,8 @@ use clap::{Parser, Subcommand};
 use serde_json::{Map, Value};
 use std::path::PathBuf;
 use vdb_core::{
-    VdbOptions, VdbStore, DEFAULT_MAX_DOCUMENTS, DEFAULT_MAX_WAL_BYTES, MAX_CONFIGURED_DOCUMENTS,
-    MAX_CONFIGURED_WAL_BYTES,
+    VdbOptions, VdbStore, DEFAULT_MAX_DOCUMENTS, DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_MAX_WAL_BYTES,
+    MAX_CONFIGURED_DOCUMENTS, MAX_CONFIGURED_PAYLOAD_BYTES, MAX_CONFIGURED_WAL_BYTES,
 };
 
 fn parse_max_documents(value: &str) -> Result<usize, String> {
@@ -45,6 +45,14 @@ struct Cli {
         help = "Maximum materialized document count before new documents are rejected"
     )]
     max_documents: usize,
+    #[arg(
+        long,
+        default_value_t = DEFAULT_MAX_PAYLOAD_BYTES,
+        value_parser = clap::value_parser!(u64).range(1..=MAX_CONFIGURED_PAYLOAD_BYTES),
+        global = true,
+        help = "Maximum aggregate document payload bytes held in materialized state"
+    )]
+    max_payload_bytes: u64,
     #[command(subcommand)]
     command: Command,
 }
@@ -135,6 +143,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let options = VdbOptions {
         max_documents: cli.max_documents,
+        max_payload_bytes: cli.max_payload_bytes,
         max_wal_bytes: cli.max_wal_bytes,
         ..VdbOptions::default()
     };
@@ -278,6 +287,24 @@ mod tests {
         let cli = Cli::try_parse_from(["vdb", "--max-documents", "2500", "health"]).unwrap();
         assert_eq!(cli.max_documents, 2500);
         assert!(matches!(cli.command, Command::Health));
+    }
+
+    #[test]
+    fn parses_custom_payload_budget() {
+        let cli = Cli::try_parse_from(["vdb", "--max-payload-bytes", "1048576", "health"]).unwrap();
+        assert_eq!(cli.max_payload_bytes, 1_048_576);
+        assert!(matches!(cli.command, Command::Health));
+    }
+
+    #[test]
+    fn rejects_payload_budget_above_supported_maximum() {
+        let result = Cli::try_parse_from([
+            "vdb",
+            "--max-payload-bytes",
+            &(MAX_CONFIGURED_PAYLOAD_BYTES + 1).to_string(),
+            "health",
+        ]);
+        assert!(result.is_err());
     }
 
     #[test]

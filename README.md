@@ -6,7 +6,7 @@
 
 ## Current MVP
 
-The current Rust rebuild provides a native workspace with a versioned `VDB1` header, an append-only, length-prefixed CBOR log, per-record SHA-256 checksums, bounded streaming replay, semantic WAL validation, an in-memory document index, optimistic document versions, bounded equality queries and imports, schema reports, health metrics, a configurable WAL quota, verified backups, snapshot manifests, and an explicit loopback-only read-only browser GUI for local inspection. Startup acquires the per-instance lock before header creation, database artifacts use private Unix modes, existing symlink targets are rejected, and compaction rotates the WAL through a synchronized same-directory temporary file rather than rewriting the active file in place.
+The current Rust rebuild provides a native workspace with a versioned `VDB1` header, an append-only, length-prefixed CBOR log, per-record SHA-256 checksums, bounded streaming replay, semantic WAL validation, an in-memory document index, optimistic document versions, bounded equality queries and imports, schema reports, health metrics, configurable WAL and aggregate payload quotas, a configurable materialized document-count budget, verified backups, snapshot manifests, and an explicit loopback-only read-only browser GUI for local inspection. Startup acquires the per-instance lock before header creation, database artifacts use private Unix modes, existing symlink targets are rejected, and compaction rotates the WAL through a synchronized same-directory temporary file rather than rewriting the active file in place.
 
 The Steward is currently deterministic and read-only. It reports safe findings rather than executing model-generated commands. A future local/private model may explain findings, but all changes must pass typed validation, policy, approval, and verification.
 
@@ -47,7 +47,7 @@ VDB follows progressive disclosure. Beginners can use the read-only local GUI an
 
 ## Safety defaults
 
-A new VDB instance is local-first. The design uses bounded document, query, import, and WAL sizes, optimistic version checks, explicit destructive operations, checksummed/recoverable storage records, and read-only Steward behavior. VDB does not expose a generic shell tool, unrestricted AI database access, or automatic destructive repairs.
+A new VDB instance is local-first. The design uses bounded document, document-count, aggregate-payload, query, import, and WAL sizes, optimistic version checks, explicit destructive operations, checksummed/recoverable storage records, and read-only Steward behavior. VDB does not expose a generic shell tool, unrestricted AI database access, or automatic destructive repairs.
 
 ## Repository map
 
@@ -68,7 +68,7 @@ Before making changes, read [`AGENTS.md`](AGENTS.md), [`CONTRIBUTING.md`](CONTRI
 
 ## Status and limitations
 
-This is an MVP and not yet a production database. The current implementation uses an in-memory state map and indexes rebuilt from a versioned, checksummed WAL; replay is streamed, writes are bounded by a configurable WAL quota, but the resulting working set is not yet memory-bounded. It provides a single-process lock file, bounded JSON Lines import, semantic WAL validation, private Unix file modes, symlink rejection for common file paths, verified backups, and atomic-path WAL compaction. It does not yet provide encryption at rest, authenticated encryption, a query planner, replication, authentication, or a remote network server. The opt-in GUI binds only to `127.0.0.1`, is read-only, and is not an authenticated API. A lock file can remain after an abnormal process exit, symlink checks do not close every platform-specific TOCTOU race, and filesystem replacement durability is platform-dependent. These are deliberate follow-on milestones, not hidden guarantees.
+This is an MVP and not yet a production database. The current implementation uses an in-memory state map and indexes rebuilt from a versioned, checksummed WAL; replay is streamed, and writes are bounded by document-count, aggregate-payload, and WAL quotas, but index overhead and the full process working set are not yet byte-accounted. It provides a single-process lock file, bounded JSON Lines import, semantic WAL validation, private Unix file modes, symlink rejection for common file paths, verified backups, and atomic-path WAL compaction. It does not yet provide encryption at rest, authenticated encryption, a query planner, replication, authentication, or a remote network server. The opt-in GUI binds only to `127.0.0.1`, is read-only, and is not an authenticated API. A lock file can remain after an abnormal process exit, symlink checks do not close every platform-specific TOCTOU race, and filesystem replacement durability is platform-dependent. These are deliberate follow-on milestones, not hidden guarantees.
 
 ## License
 
