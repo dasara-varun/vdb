@@ -49,6 +49,16 @@ jobs:
           name: hosted-cargo-lock
           path: Cargo.lock
 
+  dependency-policy:
+    name: supply-chain / cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cargo dependency policy
+        uses: EmbarkStudios/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
+        with:
+          command: check
+          arguments: --all-features
   security-audit:
     name: security / RustSec
     runs-on: ubuntu-latest

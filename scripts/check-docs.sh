@@ -15,6 +15,7 @@ required_files=(
   "docs/developer-research.md"
   "docs/gui-research.md"
   "docs/crypto-research.md"
+  "deny.toml"
   "docs/durability-matrix.md"
   ".github/dependabot.yml"
   "docs/project-status.md"
