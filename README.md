@@ -38,7 +38,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build --release
 ```
 
-The repository can build with the locally vendored Debian Rust registry used by the development environment. Normal development machines may use the standard crates.io registry.
+The development sandbox may use a locally vendored Debian Rust registry, while GitHub Actions resolves dependencies from the standard crates.io registry. The repository intentionally does not commit a mirror-specific lockfile until an authentic crates.io lockfile can be generated.
 
 ## User experience
 
