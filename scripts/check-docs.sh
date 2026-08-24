@@ -7,6 +7,9 @@ required_files=(
   "README.md"
   ".github/pull_request_template.md"
   "docs/README.md"
+  "docs/agent-tooling.md"
+  "docs/loop-engineering.md"
+  "docs/installation.md"
   "docs/documentation-maintenance.md"
   "docs/project-status.md"
   "docs/decisions/README.md"
@@ -25,6 +28,13 @@ required_files=(
 for path in "${required_files[@]}"; do
   if [[ ! -f "$path" ]]; then
     printf 'Missing required documentation file: %s\n' "$path" >&2
+    exit 1
+  fi
+done
+
+for workflow in .github/workflows/ci.yml .github/workflows/release.yml; do
+  if [[ ! -f "$workflow" ]]; then
+    printf 'Missing required workflow file: %s\n' "$workflow" >&2
     exit 1
   fi
 done
@@ -51,4 +61,4 @@ if [[ -f Cargo.lock ]]; then
   exit 1
 fi
 
-printf 'Documentation consistency check passed (%d required files and 4 diagram assets).\n' "${#required_files[@]}"
+printf 'Documentation consistency check passed (%d required files, 2 workflows, and 4 diagram assets).\n' "${#required_files[@]}"

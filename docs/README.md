@@ -7,6 +7,7 @@ This directory is the project’s durable knowledge base. It explains what VDB i
 | Need | Read first | Then read |
 |---|---|---|
 | Understand VDB quickly | [`README.md`](../README.md) | [`product.md`](product.md), [`project-status.md`](project-status.md) |
+| Install VDB on a device | [`installation.md`](installation.md) | [`operations.md`](operations.md), [`security.md`](security.md) |
 | Build or modify Rust code | [`../AGENTS.md`](../AGENTS.md) | [`architecture.md`](architecture.md), [`testing.md`](testing.md), [`roadmap.md`](roadmap.md) |
 | Operate a local database | [`operations.md`](operations.md) | [`data-format.md`](data-format.md), [`testing.md`](testing.md) |
 | Review security | [`security.md`](security.md) | [`production-gap-audit.md`](production-gap-audit.md), [`improvement-plan.md`](improvement-plan.md), [`steward.md`](steward.md) |
@@ -16,6 +17,8 @@ This directory is the project’s durable knowledge base. It explains what VDB i
 | Assess demand and product direction | [`demand-validation.md`](demand-validation.md) | [`product.md`](product.md), [`roadmap.md`](roadmap.md) |
 | Record a new architectural decision | [`decisions/README.md`](decisions/README.md) | [`templates/decision-record.md`](templates/decision-record.md) |
 | Update project knowledge | [`documentation-maintenance.md`](documentation-maintenance.md) | [`project-status.md`](project-status.md), [`templates/progress-update.md`](templates/progress-update.md) |
+| Use Claude Code tooling safely | [`agent-tooling.md`](agent-tooling.md) | [`loop-engineering.md`](loop-engineering.md), `AGENTS.md` |
+| Design a bounded continuation loop | [`loop-engineering.md`](loop-engineering.md) | [`agent-tooling.md`](agent-tooling.md), `production-gap-audit.md` |
 
 ## Source-of-truth map
 
@@ -38,6 +41,7 @@ This directory is the project’s durable knowledge base. It explains what VDB i
 |---|---|
 | [`api.md`](api.md) | MVP API and CLI contract |
 | [`architecture.md`](architecture.md) | Trust zones, data flow, recovery, and MVP boundary |
+| [`agent-tooling.md`](agent-tooling.md) | Verified Claude Code extensions, installation scope, privacy, and security rules |
 | [`audit-research.md`](audit-research.md) | Research notes and source links from the latest audit |
 | [`benchmarks.md`](benchmarks.md) | Measured baseline and benchmark limitations |
 | [`data-format.md`](data-format.md) | `VDB1` header, CBOR WAL, checksums, replay, and compatibility |
@@ -45,6 +49,8 @@ This directory is the project’s durable knowledge base. It explains what VDB i
 | [`diagram-review.md`](diagram-review.md) | Review notes for the rendered diagrams |
 | [`documentation-maintenance.md`](documentation-maintenance.md) | Required maintenance process for this knowledge base |
 | [`improvement-plan.md`](improvement-plan.md) | Ranked research-backed technical roadmap |
+| [`installation.md`](installation.md) | Cross-platform build, installation, release, and privacy guidance |
+| [`loop-engineering.md`](loop-engineering.md) | Bounded automation, session handoffs, and stop conditions |
 | [`operations.md`](operations.md) | Local deployment, backup, compaction, and recovery runbook |
 | [`performance.md`](performance.md) | Performance architecture and measurement principles |
 | [`product.md`](product.md) | Product promise, personas, workflows, and acceptance criteria |

@@ -6,7 +6,7 @@ The current `main` branch contains a fast Rust workspace with a local document s
 
 ## Phase 1: Production storage safety
 
-The next production milestone is authenticated encryption at rest with a reviewed key-management design, stronger backup consistency guarantees, explicit storage quotas, cross-platform filesystem validation, and extended fault-injection testing. VDB should not claim production readiness until these controls are implemented and reviewed.
+The next production milestone is authenticated encryption at rest with a reviewed key-management design, stronger backup consistency guarantees, cross-platform filesystem validation, and extended fault-injection testing. The MVP now includes an explicit configurable WAL quota and a conservative cross-platform release-artifact workflow, but neither replaces the remaining durability and security work. VDB should not claim production readiness until the full set of controls is implemented and reviewed.
 
 ## Phase 2: Query and memory scalability
 
@@ -30,7 +30,7 @@ Evaluate authenticated multi-user server mode, read replicas, explicit consisten
 
 ## Release gates
 
-Every release must pass `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, release compilation, CLI smoke tests, corruption/recovery tests, dependency checks, and benchmark regression review. Security-sensitive changes require a threat-model update and regression test.
+Every release must pass `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, release compilation, CLI smoke tests, corruption/recovery tests, documentation consistency checks, dependency checks, and benchmark regression review. Cross-platform release artifacts must additionally pass the target-platform validation matrix before being called supported. Security-sensitive changes require a threat-model update and regression test.
 
 ## Commit policy
 

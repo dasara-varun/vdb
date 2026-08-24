@@ -4,13 +4,21 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value};
 use std::path::PathBuf;
-use vdb_core::VdbStore;
+use vdb_core::{VdbOptions, VdbStore, DEFAULT_MAX_WAL_BYTES, MAX_CONFIGURED_WAL_BYTES};
 
 #[derive(Debug, Parser)]
 #[command(name = "vdb", version, about = "Fast, local-first document database")]
 struct Cli {
     #[arg(long, default_value = "vdb.vdb", global = true)]
     path: PathBuf,
+    #[arg(
+        long,
+        default_value_t = DEFAULT_MAX_WAL_BYTES,
+        value_parser = clap::value_parser!(u64).range(1..=MAX_CONFIGURED_WAL_BYTES),
+        global = true,
+        help = "Maximum WAL size in bytes before new writes are rejected"
+    )]
+    max_wal_bytes: u64,
     #[command(subcommand)]
     command: Command,
 }
@@ -91,12 +99,16 @@ fn print_json<T: serde::Serialize>(value: &T) -> Result<()> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let options = VdbOptions {
+        max_wal_bytes: cli.max_wal_bytes,
+        ..VdbOptions::default()
+    };
     if matches!(cli.command, Command::Init) {
-        let _store = VdbStore::open(&cli.path).context("initialize VDB")?;
+        let _store = VdbStore::open_with_options(&cli.path, options).context("initialize VDB")?;
         return print_json(&serde_json::json!({"status": "initialized", "path": cli.path}));
     }
 
-    let store = VdbStore::open(&cli.path).context("open VDB")?;
+    let store = VdbStore::open_with_options(&cli.path, options).context("open VDB")?;
     match cli.command {
         Command::Init => unreachable!(),
         Command::Collections { command } => match command {

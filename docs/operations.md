@@ -56,7 +56,13 @@ If the file ends with an incomplete record, the MVP truncates the incomplete tai
 
 ## Resource limits
 
-The MVP limits documents to 1 MiB by default, configured document limits to 64 MiB, JSON Lines import records to 2 MiB, WAL records to 64 MiB, and queries to 1–1000 results. WAL replay is streamed, but the materialized working set and equality indexes are currently held in memory, so this MVP is not suitable for datasets larger than the available memory budget. Operators should monitor WAL growth, document count, payload bytes, disk usage, process memory, and restart replay time.
+The MVP limits documents to 1 MiB by default, configured document limits to 64 MiB, JSON Lines import records to 2 MiB, WAL records to 64 MiB, and queries to 1–1000 results. The default configurable WAL quota is 512 MiB, with a supported configuration ceiling of 16 GiB. Health output reports both `wal_bytes` and `max_wal_bytes`; operators should treat a high ratio as a signal to verify a backup and schedule compaction. A quota rejection occurs before the new record is appended, so the failed write does not change logical state or WAL size.
+
+For CLI usage, pass the quota on every command that opens the database, for example `vdb --path ./data/app.vdb --max-wal-bytes 1073741824 health`. Opening a database with a lower quota does not delete existing data. Compaction can reduce obsolete WAL history even when ordinary writes are quota-blocked. WAL replay is streamed, but the materialized working set and equality indexes are currently held in memory, so this MVP is not suitable for datasets larger than the available memory budget. Operators should monitor WAL growth, document count, payload bytes, disk usage, process memory, and restart replay time.
+
+## Installation and continuation
+
+Use [`installation.md`](installation.md) for native Linux, macOS, and Windows build/install guidance. Use [`agent-tooling.md`](agent-tooling.md) for optional Claude Code extensions and [`loop-engineering.md`](loop-engineering.md) before configuring any recurring or cross-session engineering workflow.
 
 ## Current limitations
 

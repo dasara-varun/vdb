@@ -13,6 +13,8 @@ use thiserror::Error;
 
 const MAX_WAL_RECORD_BYTES: usize = 64 * 1024 * 1024;
 const MAX_IMPORT_LINE_BYTES: usize = 2 * 1024 * 1024;
+pub const DEFAULT_MAX_WAL_BYTES: u64 = 512 * 1024 * 1024;
+pub const MAX_CONFIGURED_WAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const DEFAULT_MAX_DOCUMENT_BYTES: usize = 1_048_576;
 const MAX_CONFIGURED_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
 const FILE_MAGIC: &[u8; 4] = b"VDB1";
@@ -54,6 +56,12 @@ pub enum VdbError {
     UnsupportedFormat,
     #[error("storage handle is unavailable")]
     StorageUnavailable,
+    #[error("WAL storage quota exceeded: current {current} bytes + requested {requested} bytes > limit {limit} bytes")]
+    StorageQuotaExceeded {
+        current: u64,
+        requested: u64,
+        limit: u64,
+    },
     #[error("serialization error: {0}")]
     Serialization(String),
 }
@@ -105,6 +113,7 @@ pub struct Health {
     pub payload_bytes: usize,
     pub wal_bytes: u64,
     pub max_document_bytes: usize,
+    pub max_wal_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -121,6 +130,21 @@ pub struct BackupManifest {
     pub sha256: String,
     pub bytes: u64,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct VdbOptions {
+    pub max_document_bytes: usize,
+    pub max_wal_bytes: u64,
+}
+
+impl Default for VdbOptions {
+    fn default() -> Self {
+        Self {
+            max_document_bytes: DEFAULT_MAX_DOCUMENT_BYTES,
+            max_wal_bytes: DEFAULT_MAX_WAL_BYTES,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -146,22 +170,42 @@ pub struct VdbStore {
     state: RwLock<State>,
     write_gate: Mutex<()>,
     max_document_bytes: usize,
+    max_wal_bytes: u64,
 }
 
 impl VdbStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, VdbError> {
-        Self::open_with_limit(path, DEFAULT_MAX_DOCUMENT_BYTES)
+        Self::open_with_options(path, VdbOptions::default())
     }
 
     pub fn open_with_limit(
         path: impl AsRef<Path>,
         max_document_bytes: usize,
     ) -> Result<Self, VdbError> {
-        if !(1..=MAX_CONFIGURED_DOCUMENT_BYTES).contains(&max_document_bytes) {
+        Self::open_with_options(
+            path,
+            VdbOptions {
+                max_document_bytes,
+                ..VdbOptions::default()
+            },
+        )
+    }
+
+    pub fn open_with_options(
+        path: impl AsRef<Path>,
+        options: VdbOptions,
+    ) -> Result<Self, VdbError> {
+        if !(1..=MAX_CONFIGURED_DOCUMENT_BYTES).contains(&options.max_document_bytes) {
             return Err(VdbError::InvalidDocument(format!(
                 "maximum document size must be between 1 and {MAX_CONFIGURED_DOCUMENT_BYTES} bytes"
             )));
         }
+        if !(1..=MAX_CONFIGURED_WAL_BYTES).contains(&options.max_wal_bytes) {
+            return Err(VdbError::InvalidDocument(format!(
+                "maximum WAL size must be between 1 and {MAX_CONFIGURED_WAL_BYTES} bytes"
+            )));
+        }
+        let max_document_bytes = options.max_document_bytes;
         let path = path.as_ref().to_path_buf();
         reject_symlink(&path)?;
         if let Some(parent) = path.parent() {
@@ -212,6 +256,7 @@ impl VdbStore {
             state: RwLock::new(state),
             write_gate: Mutex::new(()),
             max_document_bytes,
+            max_wal_bytes: options.max_wal_bytes,
         })
     }
 
@@ -476,6 +521,7 @@ impl VdbStore {
             payload_bytes,
             wal_bytes: fs::metadata(&self.path).map_or(0, |metadata| metadata.len()),
             max_document_bytes: self.max_document_bytes,
+            max_wal_bytes: self.max_wal_bytes,
         }
     }
 
@@ -530,6 +576,16 @@ impl VdbStore {
             write_wal_record(&mut temporary, &record)?;
         }
         temporary.sync_data()?;
+        let compacted_bytes = temporary.metadata()?.len();
+        if compacted_bytes > self.max_wal_bytes {
+            drop(temporary);
+            let _ = fs::remove_file(&temporary_path);
+            return Err(VdbError::StorageQuotaExceeded {
+                current: 0,
+                requested: compacted_bytes,
+                limit: self.max_wal_bytes,
+            });
+        }
         drop(temporary);
 
         let mut wal = self.wal.lock();
@@ -713,7 +769,17 @@ impl VdbStore {
     fn append(&self, record: &WalRecord) -> Result<(), VdbError> {
         let mut wal = self.wal.lock();
         let wal = wal.as_mut().ok_or(VdbError::StorageUnavailable)?;
-        write_wal_record(wal, record)?;
+        let encoded = encode_wal_record(record)?;
+        let current = wal.metadata()?.len();
+        let requested = encoded.len() as u64;
+        if current.saturating_add(requested) > self.max_wal_bytes {
+            return Err(VdbError::StorageQuotaExceeded {
+                current,
+                requested,
+                limit: self.max_wal_bytes,
+            });
+        }
+        wal.write_all(&encoded)?;
         wal.sync_data()?;
         Ok(())
     }
@@ -748,7 +814,7 @@ fn ensure_header(path: &Path) -> Result<(), VdbError> {
     Ok(())
 }
 
-fn write_wal_record(writer: &mut impl Write, record: &WalRecord) -> Result<(), VdbError> {
+fn encode_wal_record(record: &WalRecord) -> Result<Vec<u8>, VdbError> {
     let payload =
         serde_cbor::to_vec(record).map_err(|error| VdbError::Serialization(error.to_string()))?;
     if payload.len() > MAX_WAL_RECORD_BYTES {
@@ -758,9 +824,15 @@ fn write_wal_record(writer: &mut impl Write, record: &WalRecord) -> Result<(), V
     }
     let length = (payload.len() as u32).to_le_bytes();
     let checksum = Sha256::digest(&payload);
-    writer.write_all(&length)?;
-    writer.write_all(&payload)?;
-    writer.write_all(&checksum)?;
+    let mut encoded = Vec::with_capacity(4 + payload.len() + checksum.len());
+    encoded.extend_from_slice(&length);
+    encoded.extend_from_slice(&payload);
+    encoded.extend_from_slice(&checksum);
+    Ok(encoded)
+}
+
+fn write_wal_record(writer: &mut impl Write, record: &WalRecord) -> Result<(), VdbError> {
+    writer.write_all(&encode_wal_record(record)?)?;
     Ok(())
 }
 
@@ -1309,7 +1381,43 @@ mod tests {
         assert!(matches!(low, VdbError::InvalidDocument(_)));
         let high = VdbStore::open_with_limit(&path, MAX_CONFIGURED_DOCUMENT_BYTES + 1);
         assert!(matches!(high, Err(VdbError::InvalidDocument(_))));
+        let invalid_wal = VdbStore::open_with_options(
+            &path,
+            VdbOptions {
+                max_wal_bytes: 0,
+                ..VdbOptions::default()
+            },
+        );
+        assert!(matches!(invalid_wal, Err(VdbError::InvalidDocument(_))));
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn wal_quota_rejects_write_without_partial_append() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.vdb");
+        let store = VdbStore::open(&path).unwrap();
+        store.create_collection("users").unwrap();
+        let current_bytes = store.health().wal_bytes;
+        drop(store);
+
+        let constrained = VdbStore::open_with_options(
+            &path,
+            VdbOptions {
+                max_wal_bytes: current_bytes + 1,
+                ..VdbOptions::default()
+            },
+        )
+        .unwrap();
+        let error = constrained
+            .put("users", "u1", serde_json::json!({"name": "Asha"}), None)
+            .unwrap_err();
+        assert!(matches!(error, VdbError::StorageQuotaExceeded { .. }));
+        assert!(matches!(
+            constrained.get("users", "u1"),
+            Err(VdbError::DocumentNotFound { .. })
+        ));
+        assert_eq!(constrained.health().wal_bytes, current_bytes);
     }
 
     #[test]
