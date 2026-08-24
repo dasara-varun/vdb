@@ -385,7 +385,7 @@ impl VdbStore {
                 .cloned()
                 .collect(),
         };
-        documents.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        documents.sort_by_key(|document| std::cmp::Reverse(document.updated_at));
         documents.truncate(limit);
         Ok(documents)
     }
