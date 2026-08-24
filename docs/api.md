@@ -27,10 +27,13 @@ System fields are reserved. User payloads may contain nested objects and arrays.
 | Query | Uses bounded filters, projections, sort, limit, and cursor pagination |
 | Patch document | Applies a validated patch only when expected version matches |
 | Delete document | Requires explicit id or bounded filter; destructive bulk deletes require approval |
-| Create index | Creates a declared index after validation and optional approval |
+| Create index | Creates a validated single-field equality index |
+| List indexes | Reports indexed fields and document/value coverage |
 | Health | Returns storage, errors, query latency, schema, and backup summaries |
-| Backup | Creates an encrypted snapshot manifest |
-| Restore verify | Restores a snapshot into a sandbox and reports checksums/results |
+| Backup | Creates a checksummed snapshot manifest |
+| Backup verify | Reopens a snapshot and validates its manifest and health |
+| Export | Writes portable JSON Lines records |
+| Import | Validates JSON Lines records and writes them through normal document rules |
 
 ## Conditional updates
 
@@ -97,6 +100,16 @@ Any future action plan must use a typed allowlist. No API accepts arbitrary SQL,
 ## Error codes
 
 `INVALID_DOCUMENT`, `DOCUMENT_NOT_FOUND`, `VERSION_CONFLICT`, `QUERY_LIMIT_EXCEEDED`, `QUERY_TIMEOUT`, `COLLECTION_NOT_FOUND`, `INDEX_CONFLICT`, `BACKUP_FAILED`, `RESTORE_VERIFICATION_FAILED`, `UNAUTHORIZED`, `FORBIDDEN`, `APPROVAL_REQUIRED`, `POLICY_DENIED`, and `STORAGE_RECOVERY_REQUIRED`.
+
+## CLI examples
+
+```bash
+vdb --path ./app.vdb index-create users plan
+vdb --path ./app.vdb index-list users
+vdb --path ./app.vdb export ./users.jsonl
+vdb --path ./app.vdb import ./users.jsonl
+vdb --path ./app.vdb backup-verify ./backups/app.vdb
+```
 
 ## Compatibility policy
 

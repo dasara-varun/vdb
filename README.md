@@ -20,7 +20,11 @@ cargo run -- --path ./demo.vdb get users u_123
 cargo run -- --path ./demo.vdb query users --where-json '{"plan":"pro"}'
 cargo run -- --path ./demo.vdb health
 cargo run -- --path ./demo.vdb steward --collection users
+cargo run -- --path ./demo.vdb index-create users plan
 cargo run -- --path ./demo.vdb backup ./backups/demo.vdb
+cargo run -- --path ./demo.vdb backup-verify ./backups/demo.vdb
+cargo run -- --path ./demo.vdb export ./backups/users.jsonl
+cargo run -- --path ./demo.vdb compact
 ```
 
 After installation, the binary can be invoked as `vdb`.
@@ -56,7 +60,7 @@ A new VDB instance is local-first. The design uses bounded document and query si
 
 ## Status and limitations
 
-This is an MVP and not yet a production database. The current implementation uses an in-memory state map rebuilt from the WAL. It does not yet provide secondary indexes, multi-process locking, encryption-at-rest, replication, compaction, or a network server. Those are deliberate follow-on milestones, not hidden guarantees.
+This is an MVP and not yet a production database. The current implementation uses an in-memory state map rebuilt from the versioned, checksummed WAL. It provides a single-process instance lock, JSON Lines export/import, lightweight single-field equality indexes, and safe WAL compaction. It does not yet provide encryption-at-rest, replication, or a network server. Those are deliberate follow-on milestones, not hidden guarantees.
 
 ## License
 

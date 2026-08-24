@@ -18,6 +18,23 @@ vdb --path ./data/app.vdb steward --collection users
 
 The health output is an operational summary, not a durability guarantee. It reports the current in-memory state and WAL size. The Steward is read-only in the MVP.
 
+## Indexes and compaction
+
+Create an equality index only for a frequently used scalar field:
+
+```bash
+vdb --path ./data/app.vdb index-create users plan
+vdb --path ./data/app.vdb index-list users
+```
+
+The current index implementation is single-field and equality-oriented. It is rebuilt from the WAL on reopen. Compact the WAL after repeated document replacements or imports:
+
+```bash
+vdb --path ./data/app.vdb compact
+```
+
+Compaction preserves current documents and index definitions, but it should still be followed by a backup and health check.
+
 ## Backup
 
 Create a snapshot and manifest:
@@ -41,7 +58,7 @@ The MVP limits documents to 1 MiB by default and queries to 1–1000 results. Th
 
 ## Current limitations
 
-The MVP does not yet provide encryption at rest, multi-process locking, secondary indexes, compaction, a network server, replication, authentication, or production-grade key management. Do not deploy it for critical data until those controls and the recovery test program are implemented and reviewed.
+The MVP does not yet provide encryption at rest, network serving, replication, authentication, or production-grade key management. The local implementation does provide a single-process instance lock, secondary equality indexes, WAL compaction, and versioned/checksummed records. Do not deploy it for critical data until encryption, authentication, server isolation, and the recovery test program are implemented and reviewed.
 
 ## Incident record
 

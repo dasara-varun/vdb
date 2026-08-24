@@ -51,6 +51,13 @@ enum Command {
         #[arg(long, default_value_t = 100)]
         sample_limit: usize,
     },
+    IndexCreate {
+        collection: String,
+        field: String,
+    },
+    IndexList {
+        collection: String,
+    },
     Health,
     Steward {
         #[arg(long)]
@@ -68,6 +75,7 @@ enum Command {
     Import {
         source: PathBuf,
     },
+    Compact,
 }
 
 #[derive(Debug, Subcommand)]
@@ -135,6 +143,11 @@ fn main() -> Result<()> {
             collection,
             sample_limit,
         } => print_json(&store.schema_report(&collection, sample_limit)?),
+        Command::IndexCreate { collection, field } => {
+            store.create_index(&collection, &field)?;
+            print_json(&serde_json::json!({"created": format!("{collection}.{field}")}))
+        }
+        Command::IndexList { collection } => print_json(&store.list_indexes(&collection)?),
         Command::Health => print_json(&store.health()),
         Command::Steward { collection } => {
             let findings = if let Some(collection) = collection {
@@ -176,5 +189,6 @@ fn main() -> Result<()> {
             let count = store.import_jsonl(source)?;
             print_json(&serde_json::json!({"imported_documents": count}))
         }
+        Command::Compact => print_json(&serde_json::json!({"wal_bytes": store.compact()?})),
     }
 }

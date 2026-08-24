@@ -79,6 +79,10 @@ enum WalRecord {
         collection: String,
         document_id: String,
     },
+    CreateIndex {
+        collection: String,
+        field: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -107,9 +111,19 @@ pub struct BackupManifest {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct IndexInfo {
+    pub collection: String,
+    pub field: String,
+    pub indexed_values: usize,
+    pub indexed_documents: usize,
+}
+
 #[derive(Debug, Clone)]
 struct State {
     collections: HashMap<String, HashMap<String, Document>>,
+    index_fields: HashMap<String, BTreeSet<String>>,
+    indexes: HashMap<String, HashMap<String, HashMap<String, BTreeSet<String>>>>,
 }
 
 pub struct VdbStore {
@@ -254,6 +268,8 @@ impl VdbStore {
             .get_mut(collection)
             .expect("collection checked before write")
             .insert(document.id.clone(), document.clone());
+        let mut state = self.state.write();
+        refresh_document_indexes(&mut state, collection, current.as_ref(), &document);
         Ok(document)
     }
 
@@ -271,6 +287,68 @@ impl VdbStore {
             })
     }
 
+    pub fn create_index(&self, collection: &str, field: &str) -> Result<(), VdbError> {
+        self.require_collection(collection)?;
+        validate_field(field)?;
+        let _gate = self.write_gate.lock();
+        if self
+            .state
+            .read()
+            .index_fields
+            .get(collection)
+            .is_some_and(|fields| fields.contains(field))
+        {
+            return Ok(());
+        }
+        self.append(&WalRecord::CreateIndex {
+            collection: collection.to_string(),
+            field: field.to_string(),
+        })?;
+        let mut state = self.state.write();
+        state
+            .index_fields
+            .entry(collection.to_string())
+            .or_default()
+            .insert(field.to_string());
+        let documents: Vec<_> = state
+            .collections
+            .get(collection)
+            .expect("collection checked before index")
+            .values()
+            .cloned()
+            .collect();
+        let index = state
+            .indexes
+            .entry(collection.to_string())
+            .or_default()
+            .entry(field.to_string())
+            .or_default();
+        for document in documents {
+            if let Some(key) = index_key(&document.data, field) {
+                index.entry(key).or_default().insert(document.id);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn list_indexes(&self, collection: &str) -> Result<Vec<IndexInfo>, VdbError> {
+        self.require_collection(collection)?;
+        let state = self.state.read();
+        let mut result = Vec::new();
+        if let Some(indexes) = state.indexes.get(collection) {
+            for (field, values) in indexes {
+                result.push(IndexInfo {
+                    collection: collection.to_string(),
+                    field: field.clone(),
+                    indexed_values: values.len(),
+                    indexed_documents: values.values().map(BTreeSet::len).sum(),
+                });
+            }
+        }
+        result.sort_by(|left, right| left.field.cmp(&right.field));
+        Ok(result)
+    }
+
     pub fn query(
         &self,
         collection: &str,
@@ -281,16 +359,32 @@ impl VdbStore {
         if !(1..=1000).contains(&limit) {
             return Err(VdbError::InvalidLimit);
         }
-        let mut documents: Vec<_> = self
-            .state
-            .read()
+        let state = self.state.read();
+        let collection_documents = state
             .collections
             .get(collection)
-            .expect("collection checked before query")
-            .values()
-            .filter(|document| matches_filter(&document.data, where_filter))
-            .cloned()
-            .collect();
+            .expect("collection checked before query");
+        let candidate_ids = where_filter.and_then(|filter| {
+            state.indexes.get(collection).and_then(|indexes| {
+                filter.iter().find_map(|(field, expected)| {
+                    let key = serde_json::to_string(expected).ok()?;
+                    indexes.get(field)?.get(&key).cloned()
+                })
+            })
+        });
+        let mut documents: Vec<_> = match candidate_ids {
+            Some(ids) => ids
+                .iter()
+                .filter_map(|id| collection_documents.get(id))
+                .filter(|document| matches_filter(&document.data, where_filter))
+                .cloned()
+                .collect(),
+            None => collection_documents
+                .values()
+                .filter(|document| matches_filter(&document.data, where_filter))
+                .cloned()
+                .collect(),
+        };
         documents.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
         documents.truncate(limit);
         Ok(documents)
@@ -323,6 +417,8 @@ impl VdbStore {
             .get_mut(collection)
             .expect("collection checked before delete")
             .remove(document_id);
+        let mut state = self.state.write();
+        remove_document_from_indexes(&mut state, collection, &current);
         Ok(())
     }
 
@@ -367,6 +463,48 @@ impl VdbStore {
             wal_bytes: fs::metadata(&self.path).map_or(0, |metadata| metadata.len()),
             max_document_bytes: self.max_document_bytes,
         }
+    }
+
+    pub fn compact(&self) -> Result<u64, VdbError> {
+        let _gate = self.write_gate.lock();
+        let state = self.state.read().clone();
+        let mut records = Vec::new();
+        let mut collections: Vec<_> = state.collections.keys().cloned().collect();
+        collections.sort();
+        for collection in collections {
+            records.push(WalRecord::CreateCollection {
+                name: collection.clone(),
+            });
+            if let Some(fields) = state.index_fields.get(&collection) {
+                for field in fields {
+                    records.push(WalRecord::CreateIndex {
+                        collection: collection.clone(),
+                        field: field.clone(),
+                    });
+                }
+            }
+            let mut documents: Vec<_> = state
+                .collections
+                .get(&collection)
+                .expect("collection exists")
+                .values()
+                .cloned()
+                .collect();
+            documents.sort_by(|left, right| left.id.cmp(&right.id));
+            records.extend(documents.into_iter().map(|document| WalRecord::Put {
+                collection: collection.clone(),
+                document,
+            }));
+        }
+        let mut wal = self.wal.lock();
+        wal.set_len(0)?;
+        wal.write_all(FILE_MAGIC)?;
+        wal.write_all(&FORMAT_VERSION.to_le_bytes())?;
+        for record in records {
+            write_wal_record(&mut *wal, &record)?;
+        }
+        wal.sync_data()?;
+        Ok(wal.metadata()?.len())
     }
 
     pub fn export_jsonl(&self, destination: impl AsRef<Path>) -> Result<usize, VdbError> {
@@ -482,19 +620,8 @@ impl VdbStore {
     }
 
     fn append(&self, record: &WalRecord) -> Result<(), VdbError> {
-        let payload = serde_cbor::to_vec(record)
-            .map_err(|error| VdbError::Serialization(error.to_string()))?;
-        if payload.len() > MAX_WAL_RECORD_BYTES {
-            return Err(VdbError::InvalidDocument(
-                "WAL record is too large".to_string(),
-            ));
-        }
-        let length = (payload.len() as u32).to_le_bytes();
-        let checksum = Sha256::digest(&payload);
         let mut wal = self.wal.lock();
-        wal.write_all(&length)?;
-        wal.write_all(&payload)?;
-        wal.write_all(&checksum)?;
+        write_wal_record(&mut *wal, record)?;
         wal.sync_data()?;
         Ok(())
     }
@@ -523,6 +650,99 @@ fn ensure_header(path: &Path) -> Result<(), VdbError> {
         return Err(VdbError::UnsupportedFormat);
     }
     Ok(())
+}
+
+fn write_wal_record(writer: &mut impl Write, record: &WalRecord) -> Result<(), VdbError> {
+    let payload =
+        serde_cbor::to_vec(record).map_err(|error| VdbError::Serialization(error.to_string()))?;
+    if payload.len() > MAX_WAL_RECORD_BYTES {
+        return Err(VdbError::InvalidDocument(
+            "WAL record is too large".to_string(),
+        ));
+    }
+    let length = (payload.len() as u32).to_le_bytes();
+    let checksum = Sha256::digest(&payload);
+    writer.write_all(&length)?;
+    writer.write_all(&payload)?;
+    writer.write_all(&checksum)?;
+    Ok(())
+}
+
+fn validate_field(field: &str) -> Result<(), VdbError> {
+    if field.is_empty()
+        || field.len() > 128
+        || !field.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '.'
+        })
+    {
+        return Err(VdbError::InvalidDocument(format!(
+            "index field must contain only letters, numbers, underscores, or dots: {field}"
+        )));
+    }
+    Ok(())
+}
+
+fn index_key(data: &Value, field: &str) -> Option<String> {
+    let mut value = data;
+    for segment in field.split('.') {
+        value = value.get(segment)?;
+    }
+    if value.is_object() || value.is_array() {
+        return None;
+    }
+    serde_json::to_string(value).ok()
+}
+
+fn remove_document_from_indexes(state: &mut State, collection: &str, document: &Document) {
+    if let Some(indexes) = state.indexes.get_mut(collection) {
+        for (field, values) in indexes {
+            if let Some(key) = index_key(&document.data, field) {
+                if let Some(ids) = values.get_mut(&key) {
+                    ids.remove(&document.id);
+                    if ids.is_empty() {
+                        values.remove(&key);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn refresh_document_indexes(
+    state: &mut State,
+    collection: &str,
+    previous: Option<&Document>,
+    current: &Document,
+) {
+    if let Some(previous) = previous {
+        remove_document_from_indexes(state, collection, previous);
+    }
+    if let Some(indexes) = state.indexes.get_mut(collection) {
+        for (field, values) in indexes {
+            if let Some(key) = index_key(&current.data, field) {
+                values.entry(key).or_default().insert(current.id.clone());
+            }
+        }
+    }
+}
+
+fn rebuild_indexes(state: &mut State) {
+    let fields_by_collection = state.index_fields.clone();
+    for (collection, fields) in fields_by_collection {
+        let mut indexes = HashMap::new();
+        for field in fields {
+            let mut values: HashMap<String, BTreeSet<String>> = HashMap::new();
+            if let Some(documents) = state.collections.get(&collection) {
+                for document in documents.values() {
+                    if let Some(key) = index_key(&document.data, &field) {
+                        values.entry(key).or_default().insert(document.id.clone());
+                    }
+                }
+            }
+            indexes.insert(field, values);
+        }
+        state.indexes.insert(collection, indexes);
+    }
 }
 
 fn validate_collection(name: &str) -> Result<(), VdbError> {
@@ -592,6 +812,8 @@ fn replay_wal(path: &Path) -> Result<State, VdbError> {
     }
     let mut state = State {
         collections: HashMap::new(),
+        index_fields: HashMap::new(),
+        indexes: HashMap::new(),
     };
     if bytes.len() < FILE_HEADER_LEN
         || &bytes[..4] != FILE_MAGIC
@@ -624,6 +846,7 @@ fn replay_wal(path: &Path) -> Result<State, VdbError> {
         let file = OpenOptions::new().write(true).open(path)?;
         file.set_len(valid_end as u64)?;
     }
+    rebuild_indexes(&mut state);
     Ok(state)
 }
 
@@ -649,6 +872,13 @@ fn apply_record(state: &mut State, record: WalRecord) {
             if let Some(documents) = state.collections.get_mut(&collection) {
                 documents.remove(&document_id);
             }
+        }
+        WalRecord::CreateIndex { collection, field } => {
+            state
+                .index_fields
+                .entry(collection)
+                .or_default()
+                .insert(field);
         }
     }
 }
@@ -748,6 +978,78 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("checksum mismatch"));
+    }
+
+    #[test]
+    fn compaction_preserves_data_and_indexes() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.vdb");
+        let store = VdbStore::open(&path).unwrap();
+        store.create_collection("events").unwrap();
+        store.create_index("events", "kind").unwrap();
+        for index in 0..20 {
+            let id = format!("e{index}");
+            store
+                .put(
+                    "events",
+                    id.clone(),
+                    serde_json::json!({"kind": "login", "n": index}),
+                    None,
+                )
+                .unwrap();
+            store
+                .put(
+                    "events",
+                    id,
+                    serde_json::json!({"kind": "login", "n": index + 100}),
+                    Some(1),
+                )
+                .unwrap();
+        }
+        let before = store.health().wal_bytes;
+        let after = store.compact().unwrap();
+        assert!(after < before);
+        drop(store);
+        let reopened = VdbStore::open(&path).unwrap();
+        let filter = serde_json::json!({"kind": "login"}).as_object().cloned();
+        assert_eq!(
+            reopened
+                .query("events", filter.as_ref(), 100)
+                .unwrap()
+                .len(),
+            20
+        );
+        assert_eq!(
+            reopened.list_indexes("events").unwrap()[0].indexed_documents,
+            20
+        );
+    }
+
+    #[test]
+    fn equality_index_accelerates_queries_and_survives_reopen() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.vdb");
+        {
+            let store = VdbStore::open(&path).unwrap();
+            store.create_collection("users").unwrap();
+            store
+                .put("users", "u1", serde_json::json!({"plan": "pro"}), None)
+                .unwrap();
+            store
+                .put("users", "u2", serde_json::json!({"plan": "free"}), None)
+                .unwrap();
+            store.create_index("users", "plan").unwrap();
+            let filter = serde_json::json!({"plan": "pro"}).as_object().cloned();
+            assert_eq!(store.query("users", filter.as_ref(), 10).unwrap().len(), 1);
+            assert_eq!(store.list_indexes("users").unwrap()[0].field, "plan");
+        }
+        let store = VdbStore::open(&path).unwrap();
+        let filter = serde_json::json!({"plan": "free"}).as_object().cloned();
+        assert_eq!(
+            store.query("users", filter.as_ref(), 10).unwrap()[0].id,
+            "u2"
+        );
+        assert_eq!(store.list_indexes("users").unwrap()[0].indexed_documents, 2);
     }
 
     #[test]

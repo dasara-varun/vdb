@@ -1,49 +1,37 @@
 # VDB Roadmap
 
-## Phase 0: Foundation
+## Completed Rust MVP
 
-Set up the package, test runner, formatting, linting, type checking, CI, versioned storage interface, and documentation. The repository must remain runnable after every commit.
+The current `main` branch contains a fast Rust workspace with a local document store, nested JSON-like document payloads, CBOR WAL records, versioned file headers, per-record SHA-256 checksums, replay recovery, single-process instance locking, optimistic document versions, bounded equality queries, single-field equality indexes, schema reports, health diagnostics, snapshot manifests, backup verification, JSON Lines export/import, WAL compaction, a read-only Steward, CLI workflows, a release benchmark, automated tests, and GitHub Actions checks.
 
-## Phase 1: Local document MVP
+## Phase 1: Production storage safety
 
-Implement collections, nested documents, `_id`, versions, CRUD, bounded filters, pagination, TTL, structured errors, and a local CLI/API surface. Use a mature embedded storage foundation behind a repository interface.
+The next production milestone is encryption at rest with a reviewed key-management design, stronger backup consistency guarantees, explicit storage quotas, and extended fault-injection testing. VDB should not claim production readiness until these controls are implemented and reviewed.
 
-## Phase 2: Durability and recovery
+## Phase 2: Query and memory scalability
 
-Add WAL or equivalent durability, checksums, encrypted snapshots, backup manifests, restore-to-sandbox verification, crash-injection tests, and storage format versioning.
+Extend equality indexes into a query planner, add selective compound or range indexes only when benchmark evidence justifies them, and replace the unbounded in-memory state map with a memory-bounded storage/index strategy. Every change must preserve versioning, checksums, recovery, and bounded work.
 
-## Phase 3: Health and Steward Observe mode
+## Phase 3: Local application API
 
-Add schema fingerprints, drift detection, query budgets, storage metrics, backup freshness, and read-only findings. Add redaction and an optional local/private model interface only after deterministic diagnostics work.
+Add a localhost-only HTTP API with strict request validation, request-size limits, authentication hooks, stable error codes, and API contract tests. Provide small Python and TypeScript clients that use the public API rather than duplicating storage logic.
 
-## Phase 4: Recommend mode
+## Phase 4: Steward recommendation mode
 
-Add evidence-linked recommendations, typed action-plan schemas, policy validation, audit ledger, human approval flow, and simulated/canary execution. No destructive automation.
+Add redacted context construction, optional local/private model adapters, evidence-linked recommendations, typed action-plan schemas, policy validation, audit records, human approval, and simulation. The model remains untrusted and no generic shell or arbitrary command tool is introduced.
 
 ## Phase 5: Controlled automation
 
-Allow only allowlisted reversible actions, such as verified snapshots, statistics refresh, or non-critical index creation. Every action requires preconditions, budgets, postcondition verification, and a rollback path.
+Allow only allowlisted, reversible operations such as verified snapshots, statistics refresh, or non-critical index creation. Each action requires preconditions, resource budgets, approval policy, postcondition verification, and a rollback path.
 
-## Later milestones
+## Phase 6: Server and replication
 
-Evaluate server mode, authenticated multi-user access, read replicas, explicit consistency policies, export/import compatibility, and optional synchronization. Distributed writes and multi-region conflict resolution require a separate design and failure-testing program.
+Evaluate authenticated multi-user server mode, read replicas, explicit consistency policies, export/import compatibility, and optional synchronization. Distributed writes and multi-region conflict resolution require a separate design, threat model, and failure-testing program.
 
 ## Release gates
 
-A release cannot be considered stable until it passes unit tests, property tests for document operations, API contract tests, crash recovery tests, restore verification, malformed-input tests, authorization tests, dependency checks, and Steward prompt-injection/action-validation tests.
+Every release must pass `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, release compilation, CLI smoke tests, corruption/recovery tests, dependency checks, and benchmark regression review. Security-sensitive changes require a threat-model update and regression test.
 
 ## Commit policy
 
-Commits should be small and coherent. Recommended sequence:
-
-1. Documentation and repository foundation.
-2. Package scaffold and test harness.
-3. Storage adapter and document model.
-4. CRUD and query limits.
-5. CLI/API surface.
-6. Health diagnostics.
-7. Recovery and backup verification.
-8. Steward findings and policy boundary.
-9. Integration tests and release documentation.
-
-Each commit should leave the default test command runnable. Feature branches may be used for risky work, but completed work must be merged into `main`.
+Commits should be small and coherent. Each commit must leave the default test command runnable. Feature branches may be used for risky work, but completed work must be merged into `main` and pushed regularly.

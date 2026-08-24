@@ -12,11 +12,11 @@ VDB is not finished as a production database. It is a working Rust MVP with a du
 
 | Priority | Gap | Why it matters | Next action |
 |---|---|---|---|
-| P0 | Explicit process-level instance lock | Multiple processes writing the same file could corrupt the log or create undefined behavior | Add a cross-platform lock strategy or fail clearly when shared writes are unsupported |
-| P0 | File-format version and migration marker | A durable database needs to reject incompatible future binaries safely | Add a header/format metadata record and compatibility checks |
-| P0 | Export/import escape hatch | Users need a human-readable recovery and migration path | Add JSON Lines export and validated import commands |
-| P1 | Secondary indexes | Full scans will become slow as collections grow | Add declared equality indexes and measure write/read trade-offs |
-| P1 | Compaction/snapshots | The WAL grows forever in the current prototype | Add checkpoint snapshots and safe log rotation |
+| Done | Explicit process-level instance lock | Multiple processes writing the same file could corrupt the log or create undefined behavior | Implemented single-process lock file with safe cleanup and regression coverage |
+| Done | File-format version and migration marker | A durable database needs to reject incompatible future binaries safely | Implemented `VDB1` header and format-version validation |
+| Done | Export/import escape hatch | Users need a human-readable recovery and migration path | Implemented JSON Lines export and validated import commands |
+| Done | Secondary equality indexes | Full scans become slow as collections grow | Implemented single-field equality indexes with WAL-persisted definitions and reopen rebuild |
+| Done | Compaction/snapshots | The WAL could grow after repeated updates | Implemented safe WAL compaction preserving current documents and index definitions |
 | P1 | Encryption at rest | Current files are not encrypted | Add a well-reviewed encryption design after key-management decisions |
 | P1 | Local HTTP API | CLI is useful for humans but applications need a stable API | Add localhost-only API with bounded request validation |
 | P2 | Authentication and remote server | Needed only once network serving exists | Design after local API and threat model are tested |
