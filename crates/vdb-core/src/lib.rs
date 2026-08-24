@@ -1472,6 +1472,43 @@ mod tests {
     }
 
     #[test]
+    fn truncated_trailing_record_recovers_valid_prefix() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.vdb");
+        {
+            let store = VdbStore::open(&path).unwrap();
+            store.create_collection("users").unwrap();
+            store
+                .put("users", "u1", serde_json::json!({"name": "Asha"}), None)
+                .unwrap();
+        }
+
+        let complete_length = std::fs::metadata(&path).unwrap().len();
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes.pop();
+        std::fs::write(&path, bytes).unwrap();
+
+        let reopened = VdbStore::open(&path).unwrap();
+        assert_eq!(reopened.list_collections(), vec![String::from("users")]);
+        assert!(matches!(
+            reopened.get("users", "u1"),
+            Err(VdbError::DocumentNotFound { .. })
+        ));
+        assert!(std::fs::metadata(&path).unwrap().len() < complete_length);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            reopened.health().wal_bytes
+        );
+        drop(reopened);
+
+        let reopened_again = VdbStore::open(&path).unwrap();
+        assert_eq!(
+            reopened_again.list_collections(),
+            vec![String::from("users")]
+        );
+    }
+
+    #[test]
     fn jsonl_import_reads_each_record_independently() {
         let directory = tempdir().unwrap();
         let database = directory.path().join("data.vdb");

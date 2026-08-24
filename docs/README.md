@@ -11,7 +11,7 @@ This directory is the project’s durable knowledge base. It explains what VDB i
 | Build or modify Rust code | [`../AGENTS.md`](../AGENTS.md) | [`architecture.md`](architecture.md), [`testing.md`](testing.md), [`roadmap.md`](roadmap.md) |
 | Operate a local database | [`operations.md`](operations.md) | [`data-format.md`](data-format.md), [`testing.md`](testing.md) |
 | Review security | [`security.md`](security.md), [`../SECURITY.md`](../SECURITY.md) | [`production-gap-audit.md`](production-gap-audit.md), [`improvement-plan.md`](improvement-plan.md), [`steward.md`](steward.md) |
-| Understand storage compatibility | [`data-format.md`](data-format.md) | [`operations.md`](operations.md), [`testing.md`](testing.md) |
+| Understand storage compatibility | [`data-format.md`](data-format.md), [`durability-matrix.md`](durability-matrix.md) | [`operations.md`](operations.md), [`testing.md`](testing.md) |
 | Understand the Steward | [`steward.md`](steward.md) | [`security.md`](security.md), [`product.md`](product.md) |
 | Evaluate performance | [`performance.md`](performance.md) | [`benchmarks.md`](benchmarks.md), [`improvement-plan.md`](improvement-plan.md) |
 | Assess demand and product direction | [`demand-validation.md`](demand-validation.md) | [`product.md`](product.md), [`roadmap.md`](roadmap.md) |
@@ -46,6 +46,7 @@ This directory is the project’s durable knowledge base. It explains what VDB i
 | [`benchmarks.md`](benchmarks.md) | Measured baseline and benchmark limitations |
 | [`data-format.md`](data-format.md) | `VDB1` header, CBOR WAL, checksums, replay, and compatibility |
 | [`demand-validation.md`](demand-validation.md) | Demand signals, interview plan, and pilot thresholds |
+| [`durability-matrix.md`](durability-matrix.md) | Tested recovery behavior, filesystem assumptions, and release durability gaps |
 | [`diagram-review.md`](diagram-review.md) | Review notes for the rendered diagrams |
 | [`documentation-maintenance.md`](documentation-maintenance.md) | Required maintenance process for this knowledge base |
 | [`../SECURITY.md`](../SECURITY.md) | Vulnerability reporting and security disclosure policy |

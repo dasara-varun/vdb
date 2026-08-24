@@ -12,7 +12,7 @@ A database is trustworthy only when its behavior is tested under normal requests
 | Lock and compaction regressions | First-open lock ordering, atomic WAL rotation, post-compaction writes, index preservation | Implemented in `vdb-core` |
 | CLI contract tests | Command parsing, JSON output, quota validation, representative paths | Implemented baseline in `vdb-cli`; lifecycle smoke remains required |
 | Property tests | Random document and operation sequences preserve invariants | Planned |
-| Crash tests | Interrupt writes and compaction; no acknowledged record is silently lost | Planned |
+| Crash tests | Interrupt writes and compaction; no acknowledged record is silently lost | Planned; matrix and bounded fixture requirements documented in [`durability-matrix.md`](durability-matrix.md) |
 | Corruption tests | Alter payload, length, and checksum bytes; recovery fails closed | Partially covered by checksum logic |
 | Security tests | Reserved fields, size limits, bounded imports/configuration, private Unix modes, symlink paths, unsafe code, privilege boundaries, and quota rejection | Baseline implemented; expand with server mode |
 | Performance tests | Release-build throughput, p95/p99, replay, memory, WAL growth | Initial benchmark example implemented |
@@ -27,7 +27,7 @@ The following invariants should remain true: a document is either absent or has 
 
 The recovery suite should copy a valid VDB file, truncate it at every byte boundary in selected WAL records, flip bits in lengths and payloads, interrupt writes after each write step, interrupt compaction before and after temporary-file synchronization and replacement, and reopen the database. A trailing incomplete record may be safely truncated only when the implementation can prove that no complete record follows it. A checksum mismatch in a complete record must fail closed and require recovery.
 
-Compaction tests must run on every supported operating system because Rust documents that `std::fs::rename` has platform-specific behavior. The same-directory temporary-file rule should be asserted, and tests should distinguish logical correctness from power-loss durability. A future durability test must include directory-entry synchronization where the target platform supports it and document any unavoidable platform limitation.
+The [`durability-matrix.md`](durability-matrix.md) defines the current evidence contract and explicitly separates logical process-crash recovery from power-loss durability. Compaction tests must run on every supported operating system because Rust documents that `std::fs::rename` has platform-specific behavior. The same-directory temporary-file rule should be asserted, and tests should distinguish logical correctness from power-loss durability. A future durability test must include directory-entry synchronization where the target platform supports it and document any unavoidable platform limitation.
 
 ## Parser and adversarial testing
 

@@ -52,7 +52,7 @@ A verified backup is one whose manifest checksum and byte count match and whose 
 
 If VDB reports a checksum mismatch, stop writes to the affected file, preserve the original and logs, and restore the newest verified backup into a separate path. Do not delete or overwrite the original until the recovery result has been reviewed.
 
-If the file ends with an incomplete record, the MVP truncates the incomplete tail during replay. This behavior is intended for process interruption at the end of a write. A complete record with a checksum mismatch fails closed and requires recovery. If compaction leaves a `.compact.<pid>.tmp` file, first verify that no VDB process is active, preserve it for incident analysis if needed, and remove it only after the database path and backup have been validated.
+If the file ends with an incomplete record, the MVP truncates the incomplete tail during replay and repairs the file to the last complete record; deterministic coverage is documented in [`durability-matrix.md`](durability-matrix.md). This behavior is intended for process interruption at the end of a write. A complete record with a checksum mismatch fails closed and requires recovery. If compaction leaves a `.compact.<pid>.tmp` file, first verify that no VDB process is active, preserve it for incident analysis if needed, and remove it only after the database path and backup have been validated.
 
 ## Resource limits
 
