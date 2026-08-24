@@ -578,6 +578,28 @@ mod tests {
     }
 
     #[test]
+    fn checksum_mismatch_requires_recovery() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.vdb");
+        {
+            let store = VdbStore::open(&path).unwrap();
+            store.create_collection("users").unwrap();
+            store
+                .put("users", "u1", serde_json::json!({"name": "Asha"}), None)
+                .unwrap();
+        }
+        let mut bytes = std::fs::read(&path).unwrap();
+        let payload_offset = 4 + 1;
+        bytes[payload_offset] ^= 0x01;
+        std::fs::write(&path, bytes).unwrap();
+        let error = match VdbStore::open(&path) {
+            Ok(_) => panic!("tampered WAL unexpectedly opened"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("checksum mismatch"));
+    }
+
+    #[test]
     fn query_and_schema_are_bounded() {
         let directory = tempdir().unwrap();
         let store = VdbStore::open(directory.path().join("data.vdb")).unwrap();
