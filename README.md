@@ -50,11 +50,17 @@ A new VDB instance is local-first. The design uses bounded document and query si
 
 ## Repository map
 
+Before making changes, read [`AGENTS.md`](AGENTS.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), and [`docs/README.md`](docs/README.md). The documentation maintenance rules in [`docs/documentation-maintenance.md`](docs/documentation-maintenance.md) require implementation, tests, status, guides, and diagrams to remain synchronized.
+
 | Path | Purpose |
 |---|---|
+| `AGENTS.md` | Instructions for future contributors and AI agents |
+| `CONTRIBUTING.md` | Human contribution, review, and validation guide |
 | `crates/vdb-core/` | Rust storage, document model, WAL replay, queries, health, and backups |
 | `crates/vdb-cli/` | Native `vdb` command-line interface |
-| `docs/` | Product, architecture, API, security, performance, roadmap, and demand documents |
+| `docs/` | Product, architecture, API, security, performance, roadmap, status, and maintenance documents |
+| `docs/decisions/` | Accepted architectural decision records |
+| `docs/templates/` | Progress and decision-record templates |
 | `diagrams/` | Mermaid architecture and data-flow diagrams |
 | `benches/` | Planned benchmark fixtures and performance notes |
 

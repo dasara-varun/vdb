@@ -4,7 +4,7 @@
 
 The storage audit now acquires the per-instance lock before creating a new `VDB1` header, returns typed errors instead of panicking on recoverable collection, WAL, and serialization assumptions, and validates WAL length decoding without an unchecked conversion. WAL compaction writes and synchronizes a same-directory temporary file, atomically replaces the active path, reopens the append handle, and is covered by a regression test that verifies indexes, reopen, and subsequent writes. A new lock-ordering test verifies that a locked new path is not created.
 
-Documentation now records the exact header and compaction boundary, platform-dependent `rename` semantics, backup and stale-lock procedures, a cross-platform crash/fuzz testing strategy, dependency reproducibility constraints, and a ranked improvement plan covering encryption, advisory locks, memory-bounded storage, APIs, query planning, dependency auditing, and the constrained Steward roadmap.
+Documentation now records the exact header and compaction boundary, platform-dependent `rename` semantics, backup and stale-lock procedures, a cross-platform crash/fuzz testing strategy, dependency reproducibility constraints, and a ranked improvement plan covering encryption, advisory locks, memory-bounded storage, APIs, query planning, dependency auditing, and the constrained Steward roadmap. The repository also adds `AGENTS.md`, `CONTRIBUTING.md`, a central documentation index, a living project-status snapshot, documentation-maintenance rules, ADR guidance, reusable templates, and a pull-request checklist so future people and AI agents can keep project knowledge synchronized.
 
 
 ## 0.2.0 — Rust MVP rebuild
