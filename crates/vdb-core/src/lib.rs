@@ -796,6 +796,9 @@ impl VdbStore {
         reject_symlink(&destination)?;
         let source_manifest_path = PathBuf::from(format!("{}.manifest.json", source.display()));
         reject_symlink(&source_manifest_path)?;
+        let destination_manifest_path =
+            PathBuf::from(format!("{}.manifest.json", destination.display()));
+        reject_symlink(&destination_manifest_path)?;
         let bytes = fs::read(&source)?;
         if bytes.len() < FILE_HEADER_LEN {
             return Err(VdbError::Serialization(
@@ -814,6 +817,7 @@ impl VdbStore {
             ));
         }
         reject_new_output(&destination)?;
+        reject_new_output(&destination_manifest_path)?;
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -821,8 +825,6 @@ impl VdbStore {
         let restored = VdbStore::open(&destination)?;
         let health = restored.health();
         drop(restored);
-        let destination_manifest_path =
-            PathBuf::from(format!("{}.manifest.json", destination.display()));
         let destination_manifest = BackupManifest {
             source: source.display().to_string(),
             destination: destination.display().to_string(),
@@ -1560,6 +1562,25 @@ mod tests {
         );
         drop(restored_store);
         assert_eq!(VdbStore::verify_backup(&restored).unwrap().documents, 1);
+    }
+
+    #[test]
+    fn restore_rejects_existing_destination_manifest_without_copying() {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("data.vdb");
+        let backup = directory.path().join("backup.vdb");
+        let restored = directory.path().join("restored/data.vdb");
+        let restored_manifest = PathBuf::from(format!("{}.manifest.json", restored.display()));
+        let store = VdbStore::open(source).unwrap();
+        store.create_collection("notes").unwrap();
+        store.backup(&backup).unwrap();
+        drop(store);
+        fs::create_dir_all(restored_manifest.parent().unwrap()).unwrap();
+        fs::write(&restored_manifest, b"keep this manifest").unwrap();
+
+        assert!(VdbStore::restore_backup(&backup, &restored).is_err());
+        assert!(!restored.exists());
+        assert_eq!(fs::read(&restored_manifest).unwrap(), b"keep this manifest");
     }
 
     #[test]
