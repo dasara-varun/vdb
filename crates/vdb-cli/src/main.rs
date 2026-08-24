@@ -246,7 +246,7 @@ mod tests {
     fn parses_backup_command_and_destination() {
         let cli = Cli::try_parse_from(["vdb", "backup", "backups/data.vdb"]).unwrap();
         assert!(
-            matches!(cli.command, Command::Backup { destination } if destination == PathBuf::from("backups/data.vdb"))
+            matches!(cli.command, Command::Backup { destination } if destination.as_path() == std::path::Path::new("backups/data.vdb"))
         );
     }
 }
