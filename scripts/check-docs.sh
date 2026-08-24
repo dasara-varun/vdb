@@ -4,6 +4,7 @@ set -euo pipefail
 required_files=(
   "AGENTS.md"
   "CONTRIBUTING.md"
+  "SECURITY.md"
   "README.md"
   ".github/pull_request_template.md"
   "docs/README.md"
@@ -11,6 +12,7 @@ required_files=(
   "docs/loop-engineering.md"
   "docs/installation.md"
   "docs/documentation-maintenance.md"
+  ".github/dependabot.yml"
   "docs/project-status.md"
   "docs/decisions/README.md"
   "docs/decisions/0001-local-first-read-only-steward.md"

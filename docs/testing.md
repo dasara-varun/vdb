@@ -10,13 +10,13 @@ A database is trustworthy only when its behavior is tested under normal requests
 |---|---|---|
 | Unit tests | Document validation, versions, filters, schema types, WAL replay, backup verification, format compatibility, and semantic record validation | Implemented in `vdb-core` |
 | Lock and compaction regressions | First-open lock ordering, atomic WAL rotation, post-compaction writes, index preservation | Implemented in `vdb-core` |
-| CLI contract tests | Command parsing, JSON output, error codes, path handling | Next milestone |
+| CLI contract tests | Command parsing, JSON output, quota validation, representative paths | Implemented baseline in `vdb-cli`; lifecycle smoke remains required |
 | Property tests | Random document and operation sequences preserve invariants | Planned |
 | Crash tests | Interrupt writes and compaction; no acknowledged record is silently lost | Planned |
 | Corruption tests | Alter payload, length, and checksum bytes; recovery fails closed | Partially covered by checksum logic |
-| Security tests | Reserved fields, size limits, bounded imports/configuration, private Unix modes, symlink paths, unsafe code, and privilege boundaries | Baseline implemented; expand with server mode |
+| Security tests | Reserved fields, size limits, bounded imports/configuration, private Unix modes, symlink paths, unsafe code, privilege boundaries, and quota rejection | Baseline implemented; expand with server mode |
 | Performance tests | Release-build throughput, p95/p99, replay, memory, WAL growth | Initial benchmark example implemented |
-| Compatibility tests | Format versions 1–2, version-preserving compaction snapshots, JSON Lines, and platform-specific replacement behavior | Partially implemented; expand cross-platform |
+| Compatibility tests | Format versions 1–2, version-preserving compaction snapshots, JSON Lines, quota-preserving compaction failure, and platform-specific replacement behavior | Partially implemented; expand cross-platform |
 | Supply-chain tests | Locked dependency resolution, RustSec advisories, license/source policy | Pending authentic crates.io lockfile |
 
 ## Invariants
@@ -31,7 +31,7 @@ Compaction tests must run on every supported operating system because Rust docum
 
 ## Parser and adversarial testing
 
-WAL length decoding, streaming CBOR decoding, checksum validation, semantic replay state transitions, JSON Lines import, document-size limits, query limits, path handling, and Steward inputs are untrusted-byte boundaries. The baseline suite now covers oversized imports, invalid version sequences, legacy format reopening, backup self-target rejection, private Unix modes, symlink rejection, and configuration limits. Add property tests and fuzz targets for the remaining parser and recovery paths. Fuzz cases must be bounded in CPU, memory, and input size; each failure should be reduced to a deterministic regression fixture. Run sanitizers and thread/concurrency checks in a separate supported environment rather than making the ordinary developer loop unnecessarily slow.
+WAL length decoding, streaming CBOR decoding, checksum validation, semantic replay state transitions, JSON Lines import, document-size limits, query limits, path handling, and Steward inputs are untrusted-byte boundaries. The baseline suite now covers oversized imports, multiple-record JSON Lines import, invalid version sequences, legacy format reopening, backup self-target rejection, private Unix modes, symlink rejection, configuration limits, write-time WAL quota rejection without partial append, and compaction quota failure with original-database preservation. Add property tests and fuzz targets for the remaining parser and recovery paths. Fuzz cases must be bounded in CPU, memory, and input size; each failure should be reduced to a deterministic regression fixture. Run sanitizers and thread/concurrency checks in a separate supported environment rather than making the ordinary developer loop unnecessarily slow.
 
 ## Supply-chain testing
 
@@ -39,4 +39,4 @@ Once an authentic crates.io `Cargo.lock` is available, CI should use `--locked` 
 
 ## Release gate
 
-Every release must pass `cargo test --workspace`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, a release build, the CLI smoke workflow, and the release benchmark smoke test. Security-sensitive features require a regression test and a documented threat-model update. A production release additionally requires a reviewed encryption design, backup/restore drill, cross-platform lock and compaction results, and a dependency advisory report.
+Every release must pass `cargo test --workspace`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, a release build, the documentation consistency check, the CLI smoke workflow including `--max-wal-bytes`, and the release benchmark smoke test. Security-sensitive features require a regression test and a documented threat-model update. A production release additionally requires a reviewed encryption design, backup/restore drill, cross-platform lock and compaction results, and a dependency advisory report.

@@ -25,7 +25,7 @@ The project is **not production-ready**. Its current state is deliberately small
 | Health and schema reports | Implemented | CLI and core tests |
 | Verified backup and JSON Lines portability | Implemented baseline | `docs/operations.md`, backup/export tests |
 | WAL compaction | Implemented safer version-preserving baseline | `docs/data-format.md`, compaction regression test |
-| Configurable WAL storage quota | Implemented bounded write-time guard; default 512 MiB, configurable up to 16 GiB | `docs/api.md`, core quota regression test |
+| Configurable WAL storage quota | Implemented bounded write-time guard; default 512 MiB, configurable up to 16 GiB; compaction replacement is also bounded | `docs/api.md`, core quota and compaction-quota regression tests |
 | Cross-platform installation/release workflow | Implemented baseline artifact workflow and device guide; target-platform durability validation remains pending | `.github/workflows/release.yml`, `docs/installation.md` |
 | Startup process lock ordering | Implemented baseline | `docs/operations.md`, lock regression test |
 | Deterministic read-only Steward | Implemented baseline | `docs/steward.md`, CLI output |
@@ -43,7 +43,7 @@ The project is **not production-ready**. Its current state is deliberately small
 
 ## Validation snapshot
 
-The latest validation passed formatting, Clippy with warnings denied, **20 core tests** plus workspace tests, release compilation, the documentation consistency check, and the CLI lifecycle smoke workflow covering initialization, collection creation, CRUD, query, indexes, backup verification, export, compaction, health, Steward output, reopen, and explicit quota behavior. The adversarial tests cover oversized imports, invalid WAL version sequences, legacy format reopening, unsupported-format rejection, backup self-target rejection, backup/export overwrite protection, Unix private modes for database/lock/backup/manifest files, symlink rejection, bounded document and WAL configuration, larger configured documents, and no-partial-append quota failure. GitHub Actions run `32703553327` passed for commit `1e656a5`. The working tree must be rechecked after this status-only documentation update.
+The current local validation passed shell syntax and documentation consistency checks, formatting, Clippy with warnings denied, **22 core tests and 4 CLI contract tests**, workspace tests, release compilation, and the CLI lifecycle smoke workflow covering initialization, collection creation, CRUD, query, indexes, backup verification, export/import of multiple records, compaction, health, Steward output, reopen, and explicit quota behavior. The adversarial tests cover oversized imports, multiple-record JSON Lines import, invalid WAL version sequences, legacy format reopening, unsupported-format rejection, backup self-target rejection, backup/export overwrite protection, Unix private modes for database/lock/backup/manifest files, symlink rejection, bounded document and WAL configuration, larger configured documents, and no-partial-append quota failure. GitHub Actions verification for this local milestone is pending the commit and push; record its exact run and commit here only after it succeeds.
 
 These results demonstrate correctness for the tested MVP paths; they do not prove power-loss durability on every filesystem, production capacity, encryption, multi-process safety beyond the documented lock-file behavior, or model safety under a future LLM adapter.
 

@@ -929,7 +929,7 @@ fn read_bounded_line(
     let mut line = Vec::new();
     let bytes_read = reader
         .take(max_bytes.saturating_add(1) as u64)
-        .read_to_end(&mut line)?;
+        .read_until(b'\n', &mut line)?;
     if bytes_read == 0 {
         return Ok(None);
     }
@@ -1421,6 +1421,43 @@ mod tests {
     }
 
     #[test]
+    fn compaction_quota_failure_preserves_original_database() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.vdb");
+        {
+            let store = VdbStore::open(&path).unwrap();
+            store.create_collection("users").unwrap();
+            store
+                .put("users", "u1", serde_json::json!({"name": "Asha"}), None)
+                .unwrap();
+        }
+
+        let constrained = VdbStore::open_with_options(
+            &path,
+            VdbOptions {
+                max_wal_bytes: FILE_HEADER_LEN as u64,
+                ..VdbOptions::default()
+            },
+        )
+        .unwrap();
+        let error = constrained.compact().unwrap_err();
+        assert!(matches!(error, VdbError::StorageQuotaExceeded { .. }));
+        drop(constrained);
+
+        let reopened = VdbStore::open(&path).unwrap();
+        assert_eq!(
+            reopened.get("users", "u1").unwrap().data,
+            serde_json::json!({"name": "Asha"})
+        );
+        assert!(!PathBuf::from(format!(
+            "{}.compact.{}.tmp",
+            path.display(),
+            std::process::id()
+        ))
+        .exists());
+    }
+
+    #[test]
     fn larger_configured_document_remains_readable_on_default_reopen() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("data.vdb");
@@ -1432,6 +1469,23 @@ mod tests {
         }
         let reopened = VdbStore::open(&path).unwrap();
         assert_eq!(reopened.get("large", "d1").unwrap().data, data);
+    }
+
+    #[test]
+    fn jsonl_import_reads_each_record_independently() {
+        let directory = tempdir().unwrap();
+        let database = directory.path().join("data.vdb");
+        let source = directory.path().join("records.jsonl");
+        let store = VdbStore::open(database).unwrap();
+        std::fs::write(
+            &source,
+            b"{\"collection\":\"users\",\"id\":\"u1\",\"data\":{\"name\":\"Asha\"}}\n{\"collection\":\"users\",\"id\":\"u2\",\"data\":{\"name\":\"Lin\"}}\n",
+        )
+        .unwrap();
+
+        assert_eq!(store.import_jsonl(&source).unwrap(), 2);
+        assert_eq!(store.get("users", "u1").unwrap().data["name"], "Asha");
+        assert_eq!(store.get("users", "u2").unwrap().data["name"], "Lin");
     }
 
     #[test]

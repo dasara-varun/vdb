@@ -2,7 +2,7 @@
 
 ## Verified repository state
 
-The selected repository is `dasara-varun/vdb`, its default branch is `main`, and the Rust rebuild and its documentation are maintained in the repository. This audit covers the security and reliability hardening committed as `8820310`; GitHub Actions run `32701586336` completed successfully.
+The selected repository is `dasara-varun/vdb`, its default branch is `main`, and the Rust rebuild and its documentation are maintained in the repository. This audit covers the security and reliability hardening currently being extended on `main`; the exact commit and CI run must be refreshed at each handoff.
 
 ## Current MVP status
 
@@ -16,10 +16,12 @@ VDB is not finished as a production database. It is a working Rust MVP with a du
 | Done | File-format guard | A durable database must reject incompatible files safely | Validate `VDB1` magic and supported versions 1–2 before replay; use version-2 snapshot records for compacted files |
 | Done | Checksummed replay | Complete but modified records must not be silently accepted | Fail closed on checksum mismatch and retain recovery guidance |
 | Done baseline | Input and state validation | Malformed imports or semantically forged records can cause memory or state corruption | Bound JSON Lines records and configuration, stream WAL replay, validate IDs/documents/metadata/references/version sequences, and reject common symlink hazards |
+| Done baseline | WAL storage quota | Unbounded append growth can exhaust disk or make restart/recovery operationally unsafe | Reject writes before append when the configured quota would be exceeded; expose the bound in health and CLI |
 | Done baseline | Private local artifacts | Database, lock, backup, manifest, or temporary files can expose sensitive data to other local users | Apply Unix mode `0600` on creation and existing-file open; retain platform-specific limitations in the security guide |
 | Done | Export/import escape hatch | Users need a human-readable recovery and migration path | Maintain JSON Lines export/import and add broader CLI contract tests |
 | Done | Secondary equality indexes | Repeated full scans become slow | Maintain single-field equality indexes with WAL-persisted definitions and reopen rebuild |
 | Done | Safer compaction baseline | In-place truncate/rewrite can destroy the only copy after interruption | Use synchronized same-directory temporary output, replacement, reopen, and post-compaction regression tests |
+| Done baseline | Cross-platform release packaging | Users need verifiable native installation artifacts | Build target-specific archives with checksums; certify platform durability separately before calling targets production-supported |
 | P0 | Durability proof across filesystems | File replacement and directory-entry persistence vary by platform | Add directory synchronization where supported, a platform matrix, and crash tests |
 | P0 | Encryption and key management | Current files and manifests are plaintext; SHA-256 is not confidentiality or authentication | Adopt reviewed AEAD, key rotation, secure providers, and encrypted restore drills |
 | P0 | Reproducible dependency graph | The current sandbox cannot produce a valid lockfile, so dependencies are not yet pinned in Git | Generate an authentic crates.io lockfile in a clean environment, commit it, use `--locked`, and add RustSec checks |
@@ -32,4 +34,4 @@ VDB is not finished as a production database. It is a working Rust MVP with a du
 
 ## Decision
 
-Continue with durability evidence, encryption, dependency reproducibility, memory-bounded storage, and a narrow local API before adding AI autonomy or distributed replication. This sequence reduces data-loss, security, and lock-in risk while improving day-one usability. See [`docs/improvement-plan.md`](improvement-plan.md) for the full rationale and evidence requirements.
+Continue with durability evidence, encryption, dependency reproducibility, memory-bounded storage, and a narrow local API before adding AI autonomy or distributed replication. The new quota and packaging baselines reduce immediate operational risk but do not satisfy the P0 production gates. This sequence reduces data-loss, security, and lock-in risk while improving day-one usability. See [`docs/improvement-plan.md`](improvement-plan.md) for the full rationale and evidence requirements.

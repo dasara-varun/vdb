@@ -204,3 +204,49 @@ fn main() -> Result<()> {
         Command::Compact => print_json(&serde_json::json!({"wal_bytes": store.compact()?})),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_custom_wal_quota() {
+        let cli = Cli::try_parse_from([
+            "vdb",
+            "--path",
+            "data.vdb",
+            "--max-wal-bytes",
+            "1048576",
+            "health",
+        ])
+        .unwrap();
+        assert_eq!(cli.path, PathBuf::from("data.vdb"));
+        assert_eq!(cli.max_wal_bytes, 1_048_576);
+        assert!(matches!(cli.command, Command::Health));
+    }
+
+    #[test]
+    fn rejects_zero_wal_quota() {
+        let result = Cli::try_parse_from(["vdb", "--max-wal-bytes", "0", "health"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_wal_quota_above_supported_maximum() {
+        let result = Cli::try_parse_from([
+            "vdb",
+            "--max-wal-bytes",
+            &(MAX_CONFIGURED_WAL_BYTES + 1).to_string(),
+            "health",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_backup_command_and_destination() {
+        let cli = Cli::try_parse_from(["vdb", "backup", "backups/data.vdb"]).unwrap();
+        assert!(
+            matches!(cli.command, Command::Backup { destination } if destination == PathBuf::from("backups/data.vdb"))
+        );
+    }
+}

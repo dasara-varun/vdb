@@ -50,12 +50,13 @@ A new VDB instance is local-first. The design uses bounded document, query, impo
 
 ## Repository map
 
-Before making changes, read [`AGENTS.md`](AGENTS.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), and [`docs/README.md`](docs/README.md). The documentation maintenance rules in [`docs/documentation-maintenance.md`](docs/documentation-maintenance.md) require implementation, tests, status, guides, and diagrams to remain synchronized. Claude Code users should also read [`docs/agent-tooling.md`](docs/agent-tooling.md) and [`docs/loop-engineering.md`](docs/loop-engineering.md).
+Before making changes, read [`AGENTS.md`](AGENTS.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), [`SECURITY.md`](SECURITY.md), and [`docs/README.md`](docs/README.md). The documentation maintenance rules in [`docs/documentation-maintenance.md`](docs/documentation-maintenance.md) require implementation, tests, status, guides, and diagrams to remain synchronized. Claude Code users should also read [`docs/agent-tooling.md`](docs/agent-tooling.md) and [`docs/loop-engineering.md`](docs/loop-engineering.md).
 
 | Path | Purpose |
 |---|---|
 | `AGENTS.md` | Instructions for future contributors and AI agents |
 | `CONTRIBUTING.md` | Human contribution, review, and validation guide |
+| `SECURITY.md` | Vulnerability reporting and security disclosure policy |
 | `crates/vdb-core/` | Rust storage, document model, WAL replay, queries, health, and backups |
 | `crates/vdb-cli/` | Native `vdb` command-line interface |
 | `docs/` | Product, architecture, API, security, performance, roadmap, installation, agent workflow, status, and maintenance documents |
