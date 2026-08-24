@@ -130,7 +130,7 @@ pub struct VdbStore {
     path: PathBuf,
     lock_path: PathBuf,
     lock_file: File,
-    wal: Mutex<File>,
+    wal: Mutex<Option<File>>,
     state: RwLock<State>,
     write_gate: Mutex<()>,
     max_document_bytes: usize,
@@ -149,7 +149,6 @@ impl VdbStore {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        ensure_header(&path)?;
         let lock_path = PathBuf::from(format!("{}.lock", path.display()));
         let lock_file = match OpenOptions::new()
             .write(true)
@@ -166,6 +165,10 @@ impl VdbStore {
             }
             Err(error) => return Err(error.into()),
         };
+        if let Err(error) = ensure_header(&path) {
+            let _ = fs::remove_file(&lock_path);
+            return Err(error);
+        }
         let state = match replay_wal(&path) {
             Ok(state) => state,
             Err(error) => {
@@ -189,7 +192,7 @@ impl VdbStore {
             path,
             lock_path,
             lock_file,
-            wal: Mutex::new(wal),
+            wal: Mutex::new(Some(wal)),
             state: RwLock::new(state),
             write_gate: Mutex::new(()),
             max_document_bytes,
@@ -496,15 +499,43 @@ impl VdbStore {
                 document,
             }));
         }
-        let mut wal = self.wal.lock();
-        wal.set_len(0)?;
-        wal.write_all(FILE_MAGIC)?;
-        wal.write_all(&FORMAT_VERSION.to_le_bytes())?;
+        let temporary_path = PathBuf::from(format!(
+            "{}.compact.{}.tmp",
+            self.path.display(),
+            std::process::id()
+        ));
+        let mut temporary = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&temporary_path)?;
+        temporary.write_all(FILE_MAGIC)?;
+        temporary.write_all(&FORMAT_VERSION.to_le_bytes())?;
         for record in records {
-            write_wal_record(&mut *wal, &record)?;
+            write_wal_record(&mut temporary, &record)?;
         }
-        wal.sync_data()?;
-        Ok(wal.metadata()?.len())
+        temporary.sync_data()?;
+        drop(temporary);
+
+        let mut wal = self.wal.lock();
+        let old_wal = wal.take();
+        drop(old_wal);
+        if let Err(error) = fs::rename(&temporary_path, &self.path) {
+            *wal = Some(
+                OpenOptions::new()
+                    .read(true)
+                    .append(true)
+                    .open(&self.path)?,
+            );
+            return Err(error.into());
+        }
+        let new_wal = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .open(&self.path)?;
+        let bytes = new_wal.metadata()?.len();
+        *wal = Some(new_wal);
+        Ok(bytes)
     }
 
     pub fn export_jsonl(&self, destination: impl AsRef<Path>) -> Result<usize, VdbError> {
@@ -567,7 +598,11 @@ impl VdbStore {
 
     pub fn backup(&self, destination: impl AsRef<Path>) -> Result<BackupManifest, VdbError> {
         let _gate = self.write_gate.lock();
-        self.wal.lock().sync_data()?;
+        self.wal
+            .lock()
+            .as_mut()
+            .expect("WAL handle is available while store is open")
+            .sync_data()?;
         let destination = destination.as_ref().to_path_buf();
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;
@@ -621,7 +656,10 @@ impl VdbStore {
 
     fn append(&self, record: &WalRecord) -> Result<(), VdbError> {
         let mut wal = self.wal.lock();
-        write_wal_record(&mut *wal, record)?;
+        let wal = wal
+            .as_mut()
+            .expect("WAL handle is available while store is open");
+        write_wal_record(wal, record)?;
         wal.sync_data()?;
         Ok(())
     }
@@ -1009,6 +1047,12 @@ mod tests {
         let before = store.health().wal_bytes;
         let after = store.compact().unwrap();
         assert!(after < before);
+        assert!(!PathBuf::from(format!(
+            "{}.compact.{}.tmp",
+            path.display(),
+            std::process::id()
+        ))
+        .exists());
         drop(store);
         let reopened = VdbStore::open(&path).unwrap();
         let filter = serde_json::json!({"kind": "login"}).as_object().cloned();
