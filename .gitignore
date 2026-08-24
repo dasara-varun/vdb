@@ -1,0 +1,6 @@
+/target/
+*.vdb
+*.vdb-wal
+*.manifest.json
+.DS_Store
+.env

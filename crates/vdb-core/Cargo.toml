@@ -1,0 +1,20 @@
+[package]
+name = "vdb-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Core local-first document database primitives for VDB"
+
+[dependencies]
+anyhow.workspace = true
+serde_cbor.workspace = true
+chrono.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3.9.0"

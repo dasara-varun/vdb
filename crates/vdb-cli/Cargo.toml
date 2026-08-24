@@ -1,0 +1,15 @@
+[package]
+name = "vdb"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "VDB command-line interface"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+vdb-core = { path = "../vdb-core" }

@@ -1,0 +1,160 @@
+use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
+use serde_json::{Map, Value};
+use std::path::PathBuf;
+use vdb_core::VdbStore;
+
+#[derive(Debug, Parser)]
+#[command(name = "vdb", version, about = "Fast, local-first document database")]
+struct Cli {
+    #[arg(long, default_value = "vdb.vdb", global = true)]
+    path: PathBuf,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    Init,
+    Collections {
+        #[command(subcommand)]
+        command: CollectionCommand,
+    },
+    Put {
+        collection: String,
+        id: String,
+        document: String,
+        #[arg(long)]
+        expected_version: Option<u64>,
+    },
+    Get {
+        collection: String,
+        id: String,
+    },
+    Query {
+        collection: String,
+        #[arg(long, default_value = "{}")]
+        where_json: String,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
+    Delete {
+        collection: String,
+        id: String,
+        #[arg(long)]
+        expected_version: Option<u64>,
+    },
+    Schema {
+        collection: String,
+        #[arg(long, default_value_t = 100)]
+        sample_limit: usize,
+    },
+    Health,
+    Steward {
+        #[arg(long)]
+        collection: Option<String>,
+    },
+    Backup {
+        destination: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum CollectionCommand {
+    List,
+    Create { name: String },
+}
+
+fn print_json<T: serde::Serialize>(value: &T) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    if matches!(cli.command, Command::Init) {
+        let _store = VdbStore::open(&cli.path).context("initialize VDB")?;
+        return print_json(&serde_json::json!({"status": "initialized", "path": cli.path}));
+    }
+
+    let store = VdbStore::open(&cli.path).context("open VDB")?;
+    match cli.command {
+        Command::Init => unreachable!(),
+        Command::Collections { command } => match command {
+            CollectionCommand::List => print_json(&store.list_collections()),
+            CollectionCommand::Create { name } => {
+                store.create_collection(&name)?;
+                print_json(&serde_json::json!({"created": name}))
+            }
+        },
+        Command::Put {
+            collection,
+            id,
+            document,
+            expected_version,
+        } => {
+            let value: Value =
+                serde_json::from_str(&document).context("document must be valid JSON")?;
+            print_json(&store.put(&collection, id, value, expected_version)?)
+        }
+        Command::Get { collection, id } => print_json(&store.get(&collection, &id)?),
+        Command::Query {
+            collection,
+            where_json,
+            limit,
+        } => {
+            let value: Value =
+                serde_json::from_str(&where_json).context("--where-json must be valid JSON")?;
+            let map: Option<Map<String, Value>> = value.as_object().cloned();
+            if value.is_object() || value.is_null() {
+                print_json(&store.query(&collection, map.as_ref(), limit)?)
+            } else {
+                anyhow::bail!("--where-json must be a JSON object")
+            }
+        }
+        Command::Delete {
+            collection,
+            id,
+            expected_version,
+        } => {
+            store.delete(&collection, &id, expected_version)?;
+            print_json(&serde_json::json!({"deleted": format!("{collection}/{id}")}))
+        }
+        Command::Schema {
+            collection,
+            sample_limit,
+        } => print_json(&store.schema_report(&collection, sample_limit)?),
+        Command::Health => print_json(&store.health()),
+        Command::Steward { collection } => {
+            let findings = if let Some(collection) = collection {
+                let schema = store.schema_report(&collection, 100)?;
+                let mixed = schema
+                    .fields
+                    .iter()
+                    .filter(|(_, types)| types.len() > 1)
+                    .count();
+                serde_json::json!({
+                    "mode": "observe",
+                    "actions": [],
+                    "health": store.health(),
+                    "findings": if mixed > 0 { vec![serde_json::json!({
+                        "kind": "SCHEMA_DRIFT",
+                        "severity": "medium",
+                        "collection": collection,
+                        "evidence": format!("{mixed} field(s) have multiple observed types"),
+                        "approval_required": true,
+                    })] } else { Vec::new() },
+                })
+            } else {
+                serde_json::json!({
+                    "mode": "observe",
+                    "actions": [],
+                    "health": store.health(),
+                    "findings": [],
+                })
+            };
+            print_json(&findings)
+        }
+        Command::Backup { destination } => print_json(&store.backup(destination)?),
+    }
+}
