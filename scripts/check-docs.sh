@@ -66,8 +66,8 @@ if [[ ! -f Cargo.lock ]]; then
   printf 'Cargo.lock is missing; production builds require the committed authentic lockfile\n' >&2
   exit 1
 fi
-if ! grep -Fq 'version = 3' Cargo.lock || grep -Fq 'Could not get crate checksum' Cargo.lock || grep -Fq 'PLACEHOLDER' Cargo.lock; then
-  printf 'Cargo.lock is missing the expected lockfile version or contains a placeholder checksum\n' >&2
+if ! grep -Eq '^version = (3|4)$' Cargo.lock || grep -Fq 'Could not get crate checksum' Cargo.lock || grep -Fq 'PLACEHOLDER' Cargo.lock; then
+  printf 'Cargo.lock is missing a supported lockfile version or contains a placeholder checksum\n' >&2
   exit 1
 fi
 
