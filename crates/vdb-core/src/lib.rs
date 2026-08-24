@@ -221,7 +221,7 @@ impl VdbStore {
         let lock_file = match lock_options.open(&lock_path) {
             Ok(mut file) => {
                 writeln!(file, "pid={}", std::process::id())?;
-                file.sync_data()?;
+                file.sync_all()?;
                 file
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -578,7 +578,7 @@ impl VdbStore {
         for record in records {
             write_wal_record(&mut temporary, &record)?;
         }
-        temporary.sync_data()?;
+        temporary.sync_all()?;
         let compacted_bytes = temporary.metadata()?.len();
         if compacted_bytes > self.max_wal_bytes {
             drop(temporary);
@@ -721,8 +721,8 @@ impl VdbStore {
                 limit: self.max_wal_bytes,
             });
         }
-        if let Err(error) = wal.write_all(&encoded_batch).and_then(|_| wal.sync_data()) {
-            let rollback_result = wal.set_len(current_bytes).and_then(|_| wal.sync_data());
+        if let Err(error) = wal.write_all(&encoded_batch).and_then(|_| wal.sync_all()) {
+            let rollback_result = wal.set_len(current_bytes).and_then(|_| wal.sync_all());
             if let Err(rollback_error) = rollback_result {
                 return Err(VdbError::Io(std::io::Error::new(
                     rollback_error.kind(),
@@ -741,7 +741,7 @@ impl VdbStore {
             .lock()
             .as_mut()
             .ok_or(VdbError::StorageUnavailable)?
-            .sync_data()?;
+            .sync_all()?;
         let destination = destination.as_ref().to_path_buf();
         self.reject_managed_output_path(&destination)?;
         reject_new_output(&destination)?;
@@ -754,7 +754,7 @@ impl VdbStore {
         secure_create_options(&mut destination_options);
         let mut destination_file = destination_options.open(&destination)?;
         std::io::copy(&mut source_file, &mut destination_file)?;
-        destination_file.sync_data()?;
+        destination_file.sync_all()?;
         drop(destination_file);
         restrict_file_permissions(&destination)?;
         let bytes = fs::read(&destination)?;
@@ -829,14 +829,14 @@ impl VdbStore {
             });
         }
         wal.write_all(&encoded)?;
-        wal.sync_data()?;
+        wal.sync_all()?;
         Ok(())
     }
 }
 
 impl Drop for VdbStore {
     fn drop(&mut self) {
-        let _ = self.lock_file.sync_data();
+        let _ = self.lock_file.sync_all();
         let _ = fs::remove_file(&self.lock_path);
     }
 }
@@ -849,7 +849,7 @@ fn ensure_header(path: &Path) -> Result<(), VdbError> {
         let mut file = options.open(path)?;
         file.write_all(FILE_MAGIC)?;
         file.write_all(&FORMAT_VERSION.to_le_bytes())?;
-        file.sync_data()?;
+        file.sync_all()?;
         return Ok(());
     }
     let mut file = File::open(path)?;
@@ -1078,7 +1078,7 @@ fn write_secure_file(path: &Path, bytes: &[u8]) -> Result<(), VdbError> {
     secure_create_options(&mut options);
     let mut file = options.open(path)?;
     file.write_all(bytes)?;
-    file.sync_data()?;
+    file.sync_all()?;
     restrict_file_permissions(path)?;
     Ok(())
 }
@@ -1247,7 +1247,7 @@ fn replay_wal(path: &Path, max_document_bytes: usize) -> Result<State, VdbError>
     if valid_end < file_length {
         let file = OpenOptions::new().write(true).open(path)?;
         file.set_len(valid_end)?;
-        file.sync_data()?;
+        file.sync_all()?;
     }
     rebuild_indexes(&mut state);
     Ok(state)
@@ -1746,6 +1746,41 @@ mod tests {
     }
 
     #[test]
+    fn every_truncated_final_record_boundary_recovers_valid_prefix() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.vdb");
+        {
+            let store = VdbStore::open(&path).unwrap();
+            store.create_collection("users").unwrap();
+            store
+                .put("users", "u1", serde_json::json!({"name": "Asha"}), None)
+                .unwrap();
+        }
+        let complete = std::fs::read(&path).unwrap();
+        let collection_record = encode_wal_record(&WalRecord::CreateCollection {
+            name: String::from("users"),
+        })
+        .unwrap();
+        let prefix_length = FILE_HEADER_LEN + collection_record.len();
+        assert!(prefix_length < complete.len());
+
+        for cut in prefix_length..complete.len() {
+            std::fs::write(&path, &complete[..cut]).unwrap();
+            let reopened = VdbStore::open(path.clone()).unwrap();
+            assert_eq!(reopened.list_collections(), vec![String::from("users")]);
+            assert!(matches!(
+                reopened.get("users", "u1"),
+                Err(VdbError::DocumentNotFound { .. })
+            ));
+            drop(reopened);
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().len(),
+                prefix_length as u64
+            );
+        }
+    }
+
+    #[test]
     fn oversized_wal_length_fails_closed() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("data.vdb");
@@ -1756,7 +1791,7 @@ mod tests {
         let mut file = OpenOptions::new().append(true).open(&path).unwrap();
         file.write_all(&((MAX_WAL_RECORD_BYTES as u32) + 1).to_le_bytes())
             .unwrap();
-        file.sync_data().unwrap();
+        file.sync_all().unwrap();
 
         let error = match VdbStore::open(&path) {
             Ok(_) => panic!("oversized WAL length unexpectedly opened"),

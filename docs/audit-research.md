@@ -18,7 +18,7 @@ RustSec describes itself as a vulnerability database for the Rust ecosystem and 
 
 The Rust standard library documents `std::fs::rename` as replacing an existing destination, but notes that it cannot cross mount points and that exact behavior differs between Unix and Windows. The implementation must therefore keep the temporary file in the database directory, document platform behavior, and add platform-specific validation before claiming universal crash-safe replacement. Source: https://doc.rust-lang.org/std/fs/fn.rename.html
 
-The current VDB compaction path writes and `sync_data`s a same-directory temporary file, drops the active WAL handle, renames the temporary file over the database, and reopens the WAL. This is materially safer than in-place truncation, but directory metadata durability and Windows-specific replacement behavior remain future hardening work.
+The current VDB compaction path writes and calls `sync_all` on a same-directory temporary file, drops the active WAL handle, renames the temporary file over the database, and reopens the WAL. Normal WAL, backup, manifest, lock, and repair writes also attempt `sync_all`. This is materially safer than in-place truncation, but directory metadata durability and Windows-specific replacement behavior remain future hardening work.
 
 ## Embedded-database durability comparison
 
