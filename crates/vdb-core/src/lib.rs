@@ -1216,7 +1216,9 @@ fn replay_wal(path: &Path, max_document_bytes: usize) -> Result<State, VdbError>
         }
         let length = u32::from_le_bytes(length_bytes) as usize;
         if length > MAX_WAL_RECORD_BYTES {
-            break;
+            return Err(VdbError::Serialization(format!(
+                "WAL record length {length} exceeds the {MAX_WAL_RECORD_BYTES} byte limit"
+            )));
         }
         let mut payload = vec![0u8; length];
         match reader.read_exact(&mut payload) {
@@ -1292,6 +1294,12 @@ fn apply_record(state: &mut State, record: WalRecord, format_version: u16) -> Re
                     "WAL snapshot references missing collection: {collection}"
                 ))
             })?;
+            if documents.contains_key(&document.id) {
+                return Err(VdbError::Serialization(format!(
+                    "WAL snapshot duplicates document: {collection}/{}",
+                    document.id
+                )));
+            }
             documents.insert(document.id.clone(), document);
         }
         WalRecord::Delete {
@@ -1738,6 +1746,30 @@ mod tests {
     }
 
     #[test]
+    fn oversized_wal_length_fails_closed() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.vdb");
+        {
+            let store = VdbStore::open(&path).unwrap();
+            drop(store);
+        }
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(&((MAX_WAL_RECORD_BYTES as u32) + 1).to_le_bytes())
+            .unwrap();
+        file.sync_data().unwrap();
+
+        let error = match VdbStore::open(&path) {
+            Ok(_) => panic!("oversized WAL length unexpectedly opened"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("exceeds"));
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            (FILE_HEADER_LEN + 4) as u64
+        );
+    }
+
+    #[test]
     fn invalid_wal_version_sequence_is_rejected() {
         let now = Utc::now();
         let mut state = State {
@@ -1757,6 +1789,25 @@ mod tests {
         };
         let error = apply_record(&mut state, record, 1).unwrap_err();
         assert!(error.to_string().contains("must be 1"));
+
+        let snapshot = WalRecord::SnapshotPut {
+            collection: String::from("users"),
+            document: Document {
+                id: String::from("u1"),
+                version: 1,
+                created_at: now,
+                updated_at: now,
+                data: serde_json::json!({"name": "Asha"}),
+            },
+        };
+        let mut snapshot_state = State {
+            collections: HashMap::from([(String::from("users"), HashMap::new())]),
+            index_fields: HashMap::new(),
+            indexes: HashMap::new(),
+        };
+        apply_record(&mut snapshot_state, snapshot.clone(), 2).unwrap();
+        let duplicate = apply_record(&mut snapshot_state, snapshot, 2).unwrap_err();
+        assert!(duplicate.to_string().contains("duplicates document"));
     }
 
     #[cfg(unix)]
