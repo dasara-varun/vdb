@@ -73,7 +73,7 @@ jobs:
           "$hash  ${{ matrix.archive }}" | Out-File -Encoding ascii "package/${{ matrix.archive }}.sha256"
 
       - name: Upload checksummed artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.archive }}
           path: package/${{ matrix.archive }}*
