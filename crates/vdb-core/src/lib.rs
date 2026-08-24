@@ -593,6 +593,15 @@ impl VdbStore {
             );
             return Err(error.into());
         }
+        if let Err(error) = sync_parent_directory(&self.path) {
+            *wal = Some(
+                OpenOptions::new()
+                    .read(true)
+                    .append(true)
+                    .open(&self.path)?,
+            );
+            return Err(error);
+        }
         let new_wal = OpenOptions::new()
             .read(true)
             .append(true)
@@ -747,6 +756,7 @@ impl VdbStore {
         destination_file.sync_all()?;
         drop(destination_file);
         restrict_file_permissions(&destination)?;
+        sync_parent_directory(&destination)?;
         let bytes = fs::read(&destination)?;
         let digest = Sha256::digest(&bytes);
         let manifest = BackupManifest {
@@ -930,6 +940,7 @@ fn ensure_header(path: &Path) -> Result<(), VdbError> {
         file.write_all(FILE_MAGIC)?;
         file.write_all(&FORMAT_VERSION.to_le_bytes())?;
         file.sync_all()?;
+        sync_parent_directory(path)?;
         return Ok(());
     }
     let mut file = File::open(path)?;
@@ -1160,6 +1171,19 @@ fn write_secure_file(path: &Path, bytes: &[u8]) -> Result<(), VdbError> {
     file.write_all(bytes)?;
     file.sync_all()?;
     restrict_file_permissions(path)?;
+    file.sync_all()?;
+    sync_parent_directory(path)?;
+    Ok(())
+}
+
+fn sync_parent_directory(path: &Path) -> Result<(), VdbError> {
+    #[cfg(unix)]
+    {
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        File::open(parent)?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
