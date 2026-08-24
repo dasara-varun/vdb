@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value};

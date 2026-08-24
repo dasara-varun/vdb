@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use chrono::{DateTime, Utc};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
@@ -385,9 +387,11 @@ impl VdbStore {
             ));
         }
         let length = (payload.len() as u32).to_le_bytes();
+        let checksum = Sha256::digest(&payload);
         let mut wal = self.wal.lock();
         wal.write_all(&length)?;
         wal.write_all(&payload)?;
+        wal.write_all(&checksum)?;
         wal.sync_data()?;
         Ok(())
     }
@@ -465,14 +469,21 @@ fn replay_wal(path: &Path) -> Result<State, VdbError> {
     let mut valid_end = 0usize;
     while offset + 4 <= bytes.len() {
         let length = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
-        if length > MAX_WAL_RECORD_BYTES || offset + 4 + length > bytes.len() {
+        if length > MAX_WAL_RECORD_BYTES || offset + 4 + length + 32 > bytes.len() {
             break;
         }
         let payload = &bytes[offset + 4..offset + 4 + length];
+        let expected_checksum = &bytes[offset + 4 + length..offset + 4 + length + 32];
+        let actual_checksum = Sha256::digest(payload);
+        if expected_checksum != actual_checksum.as_slice() {
+            return Err(VdbError::Serialization(
+                "WAL checksum mismatch; storage recovery is required".to_string(),
+            ));
+        }
         let record: WalRecord = serde_cbor::from_slice(payload)
             .map_err(|error| VdbError::Serialization(error.to_string()))?;
         apply_record(&mut state, record);
-        offset += 4 + length;
+        offset += 4 + length + 32;
         valid_end = offset;
     }
     if valid_end < bytes.len() {
