@@ -12,11 +12,11 @@ A database is trustworthy only when its behavior is tested under normal requests
 | Lock and compaction regressions | First-open lock ordering, Unix advisory locking, stale-lock recovery, atomic WAL rotation, post-compaction writes, index preservation | Implemented baseline in `vdb-core`; cross-platform lock validation remains required |
 | CLI contract tests | Command parsing, JSON output, quota validation, representative paths | Implemented baseline in `vdb-cli`; lifecycle smoke remains required |
 | Property tests | Random document and operation sequences preserve invariants | Planned |
-| Crash tests | Interrupt writes and compaction; no acknowledged record is silently lost | Planned; matrix and bounded fixture requirements documented in [`durability-matrix.md`](durability-matrix.md) |
+| Crash tests | Interrupt writes and compaction; no acknowledged record is silently lost | Planned; native platform test matrix exists, but interruption harness and power-loss evidence remain required; matrix and bounded fixture requirements documented in [`durability-matrix.md`](durability-matrix.md) |
 | Corruption tests | Alter payload, length, and checksum bytes; recovery fails closed | Baseline covered for oversized length prefixes, checksum mismatch, invalid version sequences, and duplicate snapshot documents; expand mutation depth |
 | Security tests | Reserved fields, size limits, bounded imports/configuration, private Unix modes, symlink paths, Unix advisory locks, unsafe code, privilege boundaries, and quota rejection | Baseline implemented; expand with cross-platform and server-mode validation |
 | Performance tests | Release-build throughput, p95/p99, replay, memory, WAL growth | Initial benchmark example implemented |
-| Compatibility tests | Format versions 1–2, version-preserving compaction snapshots, JSON Lines, atomic import, nested equality queries, quota-preserving compaction failure, restore-to-new-path, and platform-specific replacement behavior | Implemented baseline; expand cross-platform |
+| Compatibility tests | Format versions 1–2, version-preserving compaction snapshots, JSON Lines, atomic import, nested equality queries, quota-preserving compaction failure, restore-to-new-path, and platform-specific replacement behavior | Implemented baseline; native Ubuntu/macOS/Windows workspace-test job added; expand crash/replacement coverage |
 | Supply-chain tests | Locked dependency resolution, RustSec advisories, license/source policy | Pending authentic crates.io lockfile |
 
 ## Invariants
