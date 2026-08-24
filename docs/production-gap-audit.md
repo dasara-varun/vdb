@@ -2,7 +2,7 @@
 
 ## Verified repository state
 
-The selected repository is `dasara-varun/vdb`, its default branch is `main`, and the Rust rebuild and its documentation are maintained in the repository. This audit covers the current local security and reliability hardening work; its final commit and CI run must be recorded at handoff.
+The selected repository is `dasara-varun/vdb`, its default branch is `main`, and the Rust rebuild and its documentation are maintained in the repository. This audit covers the security and reliability hardening committed as `8820310`; GitHub Actions run `32701586336` completed successfully.
 
 ## Current MVP status
 
