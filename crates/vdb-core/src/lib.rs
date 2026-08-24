@@ -786,6 +786,56 @@ impl VdbStore {
         Ok(restored.health())
     }
 
+    pub fn restore_backup(
+        source: impl AsRef<Path>,
+        destination: impl AsRef<Path>,
+    ) -> Result<Health, VdbError> {
+        let source = source.as_ref().to_path_buf();
+        let destination = destination.as_ref().to_path_buf();
+        reject_symlink(&source)?;
+        reject_symlink(&destination)?;
+        let source_manifest_path = PathBuf::from(format!("{}.manifest.json", source.display()));
+        reject_symlink(&source_manifest_path)?;
+        let bytes = fs::read(&source)?;
+        if bytes.len() < FILE_HEADER_LEN {
+            return Err(VdbError::Serialization(
+                "backup is too small to contain a WAL record".to_string(),
+            ));
+        }
+        let source_manifest: BackupManifest =
+            serde_json::from_slice(&fs::read(&source_manifest_path)?)
+                .map_err(|error| VdbError::Serialization(error.to_string()))?;
+        let digest = Sha256::digest(&bytes);
+        if source_manifest.sha256 != format!("{digest:x}")
+            || source_manifest.bytes != bytes.len() as u64
+        {
+            return Err(VdbError::Serialization(
+                "backup checksum or size does not match manifest".to_string(),
+            ));
+        }
+        reject_new_output(&destination)?;
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        write_secure_file(&destination, &bytes)?;
+        let restored = VdbStore::open(&destination)?;
+        let health = restored.health();
+        drop(restored);
+        let destination_manifest_path =
+            PathBuf::from(format!("{}.manifest.json", destination.display()));
+        let destination_manifest = BackupManifest {
+            source: source.display().to_string(),
+            destination: destination.display().to_string(),
+            sha256: source_manifest.sha256,
+            bytes: source_manifest.bytes,
+            created_at: Utc::now(),
+        };
+        let manifest_bytes = serde_json::to_vec_pretty(&destination_manifest)
+            .map_err(|error| VdbError::Serialization(error.to_string()))?;
+        write_secure_file(&destination_manifest_path, &manifest_bytes)?;
+        Ok(health)
+    }
+
     fn reject_managed_output_path(&self, destination: &Path) -> Result<(), VdbError> {
         if destination == self.path || destination == self.lock_path {
             return Err(VdbError::InvalidPath(format!(
@@ -1484,6 +1534,32 @@ mod tests {
         let health = VdbStore::verify_backup(&destination).unwrap();
         assert_eq!(health.collections, 1);
         assert_eq!(health.documents, 1);
+    }
+
+    #[test]
+    fn backup_restores_to_new_path_and_is_verifiable() {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("data.vdb");
+        let backup = directory.path().join("backup.vdb");
+        let restored = directory.path().join("restored/data.vdb");
+        let store = VdbStore::open(source).unwrap();
+        store.create_collection("notes").unwrap();
+        store
+            .put("notes", "n1", serde_json::json!({"text": "hello"}), None)
+            .unwrap();
+        store.backup(&backup).unwrap();
+        drop(store);
+
+        let health = VdbStore::restore_backup(&backup, &restored).unwrap();
+        assert_eq!(health.collections, 1);
+        assert_eq!(health.documents, 1);
+        let restored_store = VdbStore::open(&restored).unwrap();
+        assert_eq!(
+            restored_store.get("notes", "n1").unwrap().data,
+            serde_json::json!({"text": "hello"})
+        );
+        drop(restored_store);
+        assert_eq!(VdbStore::verify_backup(&restored).unwrap().documents, 1);
     }
 
     #[test]

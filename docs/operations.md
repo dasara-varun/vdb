@@ -44,13 +44,15 @@ Create a snapshot and manifest:
 ```bash
 vdb --path ./data/app.vdb backup ./backups/app.vdb
 vdb --path ./data/app.vdb backup-verify ./backups/app.vdb
+vdb --path ./data/app.vdb restore ./backups/app.vdb ./restored/app.vdb
+vdb --path ./data/app.vdb backup-verify ./restored/app.vdb
 ```
 
-A verified backup is one whose required manifest exists, whose checksum and byte count match, and whose contents can be replayed by VDB. Never separate a backup from its manifest or treat a file-only copy as verified. The backup command serializes with writes and compaction, synchronizes the source WAL before copying, and writes a separate manifest. Production deployments should copy verified backups to a separate storage failure domain, use collision-safe destinations, protect the manifest with the backup, and perform scheduled restore drills into a new path.
+A verified backup is one whose required manifest exists, whose checksum and byte count match, and whose contents can be replayed by VDB. Never separate a backup from its manifest or treat a file-only copy as verified. The backup command serializes with writes and compaction, synchronizes the source WAL before copying, and writes a separate manifest. The restore command verifies the source backup and manifest, refuses an existing destination, creates parent directories as needed, reopens the restored database, and writes a new destination manifest. Production deployments should copy verified backups to a separate storage failure domain, use collision-safe destinations, protect manifests with their backups, and perform scheduled restore drills into a new path followed by `backup-verify`.
 
 ## Recovery
 
-If VDB reports a checksum mismatch, stop writes to the affected file, preserve the original and logs, and restore the newest verified backup into a separate path. Do not delete or overwrite the original until the recovery result has been reviewed.
+If VDB reports a checksum mismatch, stop writes to the affected file, preserve the original and logs, and restore the newest verified backup into a separate path with `restore`. Do not delete or overwrite the original until the recovery result has been reviewed. Restore never overwrites an existing destination, so choose a new path for each recovery attempt.
 
 If the file ends with an incomplete record, the MVP truncates the incomplete tail during replay and repairs the file to the last complete record; deterministic coverage is documented in [`durability-matrix.md`](durability-matrix.md). This behavior is intended for process interruption at the end of a write. A complete record with a checksum mismatch fails closed and requires recovery. If compaction leaves a `.compact.<pid>.tmp` file, first verify that no VDB process is active, preserve it for incident analysis if needed, and remove it only after the database path and backup have been validated.
 

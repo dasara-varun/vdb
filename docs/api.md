@@ -32,6 +32,7 @@ System fields are reserved. User payloads may contain nested objects and arrays.
 | Health | Returns current collection, document, payload, WAL-size, configured document-limit, and configured WAL-quota summaries | Implemented baseline |
 | Backup | Creates a private checksummed snapshot and manifest; refuses existing output paths | Implemented baseline |
 | Backup verify | Requires the manifest, validates its checksum and size, rejects symlink paths, then reopens the snapshot and reports health | Implemented baseline |
+| Restore | Requires a verified backup and intact manifest, creates a fresh destination without overwriting existing paths, reopens the restored database, and writes a new verifiable manifest | Implemented baseline |
 | Export | Writes portable JSON Lines records to a new output path | Implemented |
 | Import | Bounds and validates the complete JSON Lines batch before a single synchronized WAL append; invalid input or quota failure leaves logical state unchanged | Implemented baseline |
 
@@ -109,6 +110,7 @@ vdb --path ./app.vdb index-list users
 vdb --path ./app.vdb export ./users.jsonl
 vdb --path ./app.vdb import ./users.jsonl
 vdb --path ./app.vdb backup-verify ./backups/app.vdb
+vdb --path ./app.vdb restore ./backups/app.vdb ./restored/app.vdb
 vdb --path ./app.vdb --max-wal-bytes 1073741824 health
 ```
 

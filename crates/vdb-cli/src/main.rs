@@ -77,6 +77,10 @@ enum Command {
     BackupVerify {
         destination: PathBuf,
     },
+    Restore {
+        source: PathBuf,
+        destination: PathBuf,
+    },
     Export {
         destination: PathBuf,
     },
@@ -106,6 +110,14 @@ fn main() -> Result<()> {
     if matches!(cli.command, Command::Init) {
         let _store = VdbStore::open_with_options(&cli.path, options).context("initialize VDB")?;
         return print_json(&serde_json::json!({"status": "initialized", "path": cli.path}));
+    }
+    if let Command::Restore {
+        source,
+        destination,
+    } = cli.command
+    {
+        let health = VdbStore::restore_backup(source, destination).context("restore backup")?;
+        return print_json(&health);
     }
 
     let store = VdbStore::open_with_options(&cli.path, options).context("open VDB")?;
@@ -193,6 +205,7 @@ fn main() -> Result<()> {
         }
         Command::Backup { destination } => print_json(&store.backup(destination)?),
         Command::BackupVerify { destination } => print_json(&VdbStore::verify_backup(destination)?),
+        Command::Restore { .. } => unreachable!(),
         Command::Export { destination } => {
             let count = store.export_jsonl(destination)?;
             print_json(&serde_json::json!({"exported_documents": count}))
@@ -248,5 +261,16 @@ mod tests {
         assert!(
             matches!(cli.command, Command::Backup { destination } if destination.as_path() == std::path::Path::new("backups/data.vdb"))
         );
+    }
+
+    #[test]
+    fn parses_restore_command_and_paths() {
+        let cli = Cli::try_parse_from(["vdb", "restore", "backup.vdb", "restored.vdb"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Restore { source, destination }
+                if source == PathBuf::from("backup.vdb")
+                    && destination == PathBuf::from("restored.vdb")
+        ));
     }
 }
