@@ -29,6 +29,8 @@ jobs:
         run: cargo build --workspace --release --locked
       - name: GUI smoke
         run: ./scripts/gui-smoke.sh target/release/vdb
+      - name: Process-crash smoke
+        run: ./scripts/crash-smoke.sh target/release/vdb
 
   lockfile-freshness:
     name: supply-chain / lockfile freshness
