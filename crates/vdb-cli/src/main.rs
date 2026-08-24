@@ -62,6 +62,12 @@ enum Command {
     BackupVerify {
         destination: PathBuf,
     },
+    Export {
+        destination: PathBuf,
+    },
+    Import {
+        source: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -162,5 +168,13 @@ fn main() -> Result<()> {
         }
         Command::Backup { destination } => print_json(&store.backup(destination)?),
         Command::BackupVerify { destination } => print_json(&VdbStore::verify_backup(destination)?),
+        Command::Export { destination } => {
+            let count = store.export_jsonl(destination)?;
+            print_json(&serde_json::json!({"exported_documents": count}))
+        }
+        Command::Import { source } => {
+            let count = store.import_jsonl(source)?;
+            print_json(&serde_json::json!({"imported_documents": count}))
+        }
     }
 }

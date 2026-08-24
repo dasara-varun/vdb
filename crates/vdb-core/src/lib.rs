@@ -7,11 +7,14 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 const MAX_WAL_RECORD_BYTES: usize = 64 * 1024 * 1024;
+const FILE_MAGIC: &[u8; 4] = b"VDB1";
+const FORMAT_VERSION: u16 = 1;
+const FILE_HEADER_LEN: usize = 6;
 
 #[derive(Debug, Error)]
 pub enum VdbError {
@@ -39,6 +42,10 @@ pub enum VdbError {
     InvalidLimit,
     #[error("storage error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("database instance is already locked: {0}")]
+    InstanceLocked(PathBuf),
+    #[error("unsupported or corrupt VDB file format")]
+    UnsupportedFormat,
     #[error("serialization error: {0}")]
     Serialization(String),
 }
@@ -49,6 +56,13 @@ pub struct Document {
     pub version: u64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub data: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportRecord {
+    pub collection: String,
+    pub id: String,
     pub data: Value,
 }
 
@@ -100,6 +114,8 @@ struct State {
 
 pub struct VdbStore {
     path: PathBuf,
+    lock_path: PathBuf,
+    lock_file: File,
     wal: Mutex<File>,
     state: RwLock<State>,
     write_gate: Mutex<()>,
@@ -119,14 +135,46 @@ impl VdbStore {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let state = replay_wal(&path)?;
-        let wal = OpenOptions::new()
+        ensure_header(&path)?;
+        let lock_path = PathBuf::from(format!("{}.lock", path.display()));
+        let lock_file = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(mut file) => {
+                writeln!(file, "pid={}", std::process::id())?;
+                file.sync_data()?;
+                file
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(VdbError::InstanceLocked(lock_path));
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let state = match replay_wal(&path) {
+            Ok(state) => state,
+            Err(error) => {
+                let _ = fs::remove_file(&lock_path);
+                return Err(error);
+            }
+        };
+        let wal = match OpenOptions::new()
             .create(true)
             .read(true)
             .append(true)
-            .open(&path)?;
+            .open(&path)
+        {
+            Ok(wal) => wal,
+            Err(error) => {
+                let _ = fs::remove_file(&lock_path);
+                return Err(error.into());
+            }
+        };
         Ok(Self {
             path,
+            lock_path,
+            lock_file,
             wal: Mutex::new(wal),
             state: RwLock::new(state),
             write_gate: Mutex::new(()),
@@ -321,6 +369,64 @@ impl VdbStore {
         }
     }
 
+    pub fn export_jsonl(&self, destination: impl AsRef<Path>) -> Result<usize, VdbError> {
+        let destination = destination.as_ref();
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let file = File::create(destination)?;
+        let mut writer = BufWriter::new(file);
+        let state = self.state.read();
+        let mut count = 0usize;
+        let mut collections: Vec<_> = state.collections.keys().cloned().collect();
+        collections.sort();
+        for collection in collections {
+            let mut documents: Vec<_> = state
+                .collections
+                .get(&collection)
+                .expect("collection exists")
+                .values()
+                .cloned()
+                .collect();
+            documents.sort_by(|left, right| left.id.cmp(&right.id));
+            for document in documents {
+                let record = ExportRecord {
+                    collection: collection.clone(),
+                    id: document.id,
+                    data: document.data,
+                };
+                serde_json::to_writer(&mut writer, &record)
+                    .map_err(|error| VdbError::Serialization(error.to_string()))?;
+                writer.write_all(b"\n")?;
+                count += 1;
+            }
+        }
+        writer.flush()?;
+        Ok(count)
+    }
+
+    pub fn import_jsonl(&self, source: impl AsRef<Path>) -> Result<usize, VdbError> {
+        let file = File::open(source)?;
+        let reader = BufReader::new(file);
+        let mut count = 0usize;
+        for (line_number, line) in reader.lines().enumerate() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let record: ExportRecord = serde_json::from_str(&line).map_err(|error| {
+                VdbError::Serialization(format!(
+                    "invalid JSON Lines record {}: {error}",
+                    line_number + 1
+                ))
+            })?;
+            self.create_collection(&record.collection)?;
+            self.put(&record.collection, record.id, record.data, None)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
     pub fn backup(&self, destination: impl AsRef<Path>) -> Result<BackupManifest, VdbError> {
         let _gate = self.write_gate.lock();
         self.wal.lock().sync_data()?;
@@ -346,7 +452,7 @@ impl VdbStore {
     pub fn verify_backup(destination: impl AsRef<Path>) -> Result<Health, VdbError> {
         let destination = destination.as_ref();
         let bytes = fs::read(destination)?;
-        if bytes.len() < 4 {
+        if bytes.len() < FILE_HEADER_LEN {
             return Err(VdbError::Serialization(
                 "backup is too small to contain a WAL record".to_string(),
             ));
@@ -392,6 +498,31 @@ impl VdbStore {
         wal.sync_data()?;
         Ok(())
     }
+}
+
+impl Drop for VdbStore {
+    fn drop(&mut self) {
+        let _ = self.lock_file.sync_data();
+        let _ = fs::remove_file(&self.lock_path);
+    }
+}
+
+fn ensure_header(path: &Path) -> Result<(), VdbError> {
+    if !path.exists() || fs::metadata(path)?.len() == 0 {
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+        file.write_all(FILE_MAGIC)?;
+        file.write_all(&FORMAT_VERSION.to_le_bytes())?;
+        file.sync_data()?;
+        return Ok(());
+    }
+    let mut file = File::open(path)?;
+    let mut header = [0u8; FILE_HEADER_LEN];
+    file.read_exact(&mut header)
+        .map_err(|_| VdbError::UnsupportedFormat)?;
+    if &header[..4] != FILE_MAGIC || u16::from_le_bytes([header[4], header[5]]) != FORMAT_VERSION {
+        return Err(VdbError::UnsupportedFormat);
+    }
+    Ok(())
 }
 
 fn validate_collection(name: &str) -> Result<(), VdbError> {
@@ -462,8 +593,14 @@ fn replay_wal(path: &Path) -> Result<State, VdbError> {
     let mut state = State {
         collections: HashMap::new(),
     };
-    let mut offset = 0usize;
-    let mut valid_end = 0usize;
+    if bytes.len() < FILE_HEADER_LEN
+        || &bytes[..4] != FILE_MAGIC
+        || u16::from_le_bytes([bytes[4], bytes[5]]) != FORMAT_VERSION
+    {
+        return Err(VdbError::UnsupportedFormat);
+    }
+    let mut offset = FILE_HEADER_LEN;
+    let mut valid_end = FILE_HEADER_LEN;
     while offset + 4 <= bytes.len() {
         let length = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
         if length > MAX_WAL_RECORD_BYTES || offset + 4 + length + 32 > bytes.len() {
@@ -578,6 +715,20 @@ mod tests {
     }
 
     #[test]
+    fn process_lock_prevents_concurrent_instances() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.vdb");
+        let first = VdbStore::open(&path).unwrap();
+        let error = match VdbStore::open(&path) {
+            Ok(_) => panic!("second instance unexpectedly opened"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, VdbError::InstanceLocked(_)));
+        drop(first);
+        assert!(VdbStore::open(&path).is_ok());
+    }
+
+    #[test]
     fn checksum_mismatch_requires_recovery() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("data.vdb");
@@ -589,7 +740,7 @@ mod tests {
                 .unwrap();
         }
         let mut bytes = std::fs::read(&path).unwrap();
-        let payload_offset = 4 + 1;
+        let payload_offset = FILE_HEADER_LEN + 4 + 1;
         bytes[payload_offset] ^= 0x01;
         std::fs::write(&path, bytes).unwrap();
         let error = match VdbStore::open(&path) {
