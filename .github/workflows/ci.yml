@@ -30,6 +30,23 @@ jobs:
       - name: GUI smoke
         run: ./scripts/gui-smoke.sh target/release/vdb
 
+  lockfile-freshness:
+    name: supply-chain / lockfile freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate hosted lockfile
+        run: cargo generate-lockfile
+      - name: Compare hosted lockfile
+        run: git diff --exit-code -- Cargo.lock
+      - name: Upload generated lockfile for diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-cargo-lock
+          path: Cargo.lock
+
   security-audit:
     name: security / RustSec
     runs-on: ubuntu-latest
