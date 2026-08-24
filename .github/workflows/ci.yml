@@ -42,7 +42,7 @@ jobs:
         run: git diff --exit-code -- Cargo.lock
       - name: Upload generated lockfile for diagnosis
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: hosted-cargo-lock
           path: Cargo.lock
