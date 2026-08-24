@@ -18,10 +18,10 @@ cargo run -p vdb-core --example bench_local --release --offline
 
 | Operation | Workload | Elapsed | Approximate throughput |
 |---|---:|---:|---:|
-| Durable point writes | 10,000 documents | 1.169820315 seconds | 8,548 operations/second |
-| Point reads | 10,000 documents | 6.480612 milliseconds | 1,543,064 operations/second |
+| Durable point writes | 10,000 documents | 1.172268571 seconds | 8,530 operations/second |
+| Point reads | 10,000 documents | 6.770153 milliseconds | 1,477,071 operations/second |
 
-The resulting health report contained one collection, 10,000 documents, approximately 329,720 bytes of CBOR payload data, and approximately 1,818,566 bytes of WAL data. The write result includes a synchronous WAL flush per record, which is intentionally conservative for durability.
+The resulting health report contained one collection, 10,000 documents, approximately 329,720 bytes of CBOR payload data, and approximately 2,138,640 bytes of WAL data after adding per-record checksums. The write result includes a synchronous WAL flush per record, which is intentionally conservative for durability.
 
 ## Interpretation
 
