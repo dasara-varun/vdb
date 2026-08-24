@@ -215,21 +215,9 @@ impl VdbStore {
             fs::create_dir_all(parent)?;
         }
         let lock_path = PathBuf::from(format!("{}.lock", path.display()));
-        let mut lock_options = OpenOptions::new();
-        lock_options.write(true).create_new(true);
-        secure_create_options(&mut lock_options);
-        let lock_file = match lock_options.open(&lock_path) {
-            Ok(mut file) => {
-                writeln!(file, "pid={}", std::process::id())?;
-                file.sync_all()?;
-                file
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                return Err(VdbError::InstanceLocked(lock_path));
-            }
-            Err(error) => return Err(error.into()),
-        };
+        let lock_file = acquire_instance_lock(&lock_path)?;
         if let Err(error) = ensure_header(&path).and_then(|_| restrict_file_permissions(&path)) {
+            drop(lock_file);
             let _ = fs::remove_file(&lock_path);
             return Err(error);
         }
@@ -237,6 +225,7 @@ impl VdbStore {
         let state = match replay_wal(&path, MAX_CONFIGURED_DOCUMENT_BYTES) {
             Ok(state) => state,
             Err(error) => {
+                drop(lock_file);
                 let _ = fs::remove_file(&lock_path);
                 return Err(error);
             }
@@ -247,6 +236,7 @@ impl VdbStore {
         let wal = match wal_options.open(&path) {
             Ok(wal) => wal,
             Err(error) => {
+                drop(lock_file);
                 let _ = fs::remove_file(&lock_path);
                 return Err(error.into());
             }
@@ -839,6 +829,44 @@ impl Drop for VdbStore {
         let _ = self.lock_file.sync_all();
         let _ = fs::remove_file(&self.lock_path);
     }
+}
+
+#[cfg(unix)]
+fn acquire_instance_lock(lock_path: &Path) -> Result<File, VdbError> {
+    use rustix::fs::{flock, FlockOperation};
+
+    reject_symlink(lock_path)?;
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true);
+    secure_create_options(&mut options);
+    let mut file = options.open(lock_path)?;
+    if let Err(error) = flock(&file, FlockOperation::NonBlockingLockExclusive) {
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            return Err(VdbError::InstanceLocked(lock_path.to_path_buf()));
+        }
+        return Err(std::io::Error::from_raw_os_error(error.raw_os_error()).into());
+    }
+    file.set_len(0)?;
+    writeln!(file, "pid={}", std::process::id())?;
+    file.sync_all()?;
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn acquire_instance_lock(lock_path: &Path) -> Result<File, VdbError> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    secure_create_options(&mut options);
+    let mut file = match options.open(lock_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(VdbError::InstanceLocked(lock_path.to_path_buf()));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    writeln!(file, "pid={}", std::process::id())?;
+    file.sync_all()?;
+    Ok(file)
 }
 
 fn ensure_header(path: &Path) -> Result<(), VdbError> {
@@ -1899,6 +1927,7 @@ mod tests {
         assert!(!target.exists());
     }
 
+    #[cfg(not(unix))]
     #[test]
     fn locked_new_path_is_not_created() {
         let directory = tempdir().unwrap();
@@ -1911,6 +1940,21 @@ mod tests {
         };
         assert!(matches!(error, VdbError::InstanceLocked(_)));
         assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_lock_file_does_not_block_unix_reopen() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("new.vdb");
+        let lock_path = PathBuf::from(format!("{}.lock", path.display()));
+        std::fs::write(&lock_path, b"pid=previous-process\n").unwrap();
+
+        let store = VdbStore::open(&path).unwrap();
+        assert!(path.exists());
+        assert!(store.list_collections().is_empty());
+        drop(store);
+        assert!(!lock_path.exists());
     }
 
     #[test]

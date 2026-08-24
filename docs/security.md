@@ -12,7 +12,7 @@ The Rust core currently applies the following controls:
 
 | Control | Current behavior | Security value and limitation |
 |---|---|---|
-| Local process boundary | One database path uses a per-instance lock file | Prevents ordinary concurrent opens; the lock is not yet an OS advisory lock and may remain after a crash |
+| Local process boundary | Unix uses a per-instance lock file plus a nonblocking OS advisory exclusive lock; non-Unix retains a create-new lock-file fallback | Unix stale regular lock files can be reopened after the prior process exits, and concurrent opens are rejected; cross-platform locking and network-filesystem semantics still require validation |
 | Creation ordering | The lock is acquired before a new header is created | Prevents first-open initialization races |
 | File permissions | New database, lock, backup, manifest, and compaction files use mode `0600` on Unix; existing database files are tightened when opened | Reduces accidental exposure to other local users; Windows uses its native permission model and requires separate validation |
 | Symlink handling | Database, backup, manifest, and compaction target paths reject existing symbolic links | Prevents common path-redirection mistakes; a complete race-free no-follow guarantee requires platform-specific open flags or a dedicated abstraction |
@@ -32,7 +32,7 @@ Operators should run VDB as a non-root user in a user-owned directory with restr
 
 ## Identity and authorization
 
-The MVP has no network authentication or multi-user authorization. Future application, administrator, backup, and Steward identities must be separate. Any future action capability must be short-lived, scoped to an instance and collection, restricted by operation type, bounded by resource budget, and recorded in the audit ledger. The authorization model should be deny-by-default: a capability must specify its actor, resource, operation, expiry, budget, and approval requirement.
+The MVP has no network authentication or multi-user authorization. The Unix lock path now uses a safe rustix wrapper around the platform advisory-lock primitive; the non-Unix path remains conservative until a cross-platform locking abstraction and evidence are available. Future application, administrator, backup, and Steward identities must be separate. Any future action capability must be short-lived, scoped to an instance and collection, restricted by operation type, bounded by resource budget, and recorded in the audit ledger. The authorization model should be deny-by-default: a capability must specify its actor, resource, operation, expiry, budget, and approval requirement.
 
 ## AI threat model
 

@@ -9,7 +9,7 @@ cargo run --release -- init --path ./data/app.vdb
 cargo run --release -- --path ./data/app.vdb collections create users
 ```
 
-VDB acquires a per-instance `.lock` file before creating or validating a new database header. This prevents ordinary concurrent opens of the same path, including the first-open race. New database and lock files use Unix mode `0600`, and existing database files are tightened when opened. The lock file is not yet an OS advisory lock and may remain after a crash; do not delete it automatically unless you have confirmed that no VDB process is using the database. Record the incident and follow the stale-lock recovery procedure agreed for the deployment.
+VDB acquires a per-instance `.lock` file before creating or validating a new database header. On Unix, the file is also held with a nonblocking OS advisory exclusive lock, so a regular stale lock file can be safely reused after the previous process exits and concurrent opens are rejected without deleting a live lock. On non-Unix targets, the conservative create-new lock-file fallback remains in effect and may require manual stale-lock recovery. New database and lock files use Unix mode `0600`, and existing database files are tightened when opened. Network-filesystem and cross-platform lock semantics are not yet certified; record incidents and do not manually delete a lock file while a VDB process may be using the database.
 
 ## Health check
 

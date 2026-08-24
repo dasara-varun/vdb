@@ -9,12 +9,12 @@ A database is trustworthy only when its behavior is tested under normal requests
 | Layer | Scope | Current status |
 |---|---|---|
 | Unit tests | Document validation, versions, filters, nested paths, schema types, WAL replay, backup verification, format compatibility, and semantic record validation | Implemented in `vdb-core` |
-| Lock and compaction regressions | First-open lock ordering, atomic WAL rotation, post-compaction writes, index preservation | Implemented in `vdb-core` |
+| Lock and compaction regressions | First-open lock ordering, Unix advisory locking, stale-lock recovery, atomic WAL rotation, post-compaction writes, index preservation | Implemented baseline in `vdb-core`; cross-platform lock validation remains required |
 | CLI contract tests | Command parsing, JSON output, quota validation, representative paths | Implemented baseline in `vdb-cli`; lifecycle smoke remains required |
 | Property tests | Random document and operation sequences preserve invariants | Planned |
 | Crash tests | Interrupt writes and compaction; no acknowledged record is silently lost | Planned; matrix and bounded fixture requirements documented in [`durability-matrix.md`](durability-matrix.md) |
 | Corruption tests | Alter payload, length, and checksum bytes; recovery fails closed | Baseline covered for oversized length prefixes, checksum mismatch, invalid version sequences, and duplicate snapshot documents; expand mutation depth |
-| Security tests | Reserved fields, size limits, bounded imports/configuration, private Unix modes, symlink paths, unsafe code, privilege boundaries, and quota rejection | Baseline implemented; expand with server mode |
+| Security tests | Reserved fields, size limits, bounded imports/configuration, private Unix modes, symlink paths, Unix advisory locks, unsafe code, privilege boundaries, and quota rejection | Baseline implemented; expand with cross-platform and server-mode validation |
 | Performance tests | Release-build throughput, p95/p99, replay, memory, WAL growth | Initial benchmark example implemented |
 | Compatibility tests | Format versions 1–2, version-preserving compaction snapshots, JSON Lines, atomic import, nested equality queries, quota-preserving compaction failure, and platform-specific replacement behavior | Implemented baseline; expand cross-platform |
 | Supply-chain tests | Locked dependency resolution, RustSec advisories, license/source policy | Pending authentic crates.io lockfile |
@@ -27,7 +27,7 @@ The following invariants should remain true: a document is either absent or has 
 
 The recovery suite should copy a valid VDB file, truncate it at every byte boundary in selected WAL records, flip bits in lengths and payloads, interrupt writes after each write step, interrupt compaction before and after temporary-file synchronization and replacement, and reopen the database. A trailing incomplete record may be safely truncated only when the implementation can prove that no complete record follows it. A checksum mismatch in a complete record must fail closed and require recovery.
 
-The [`durability-matrix.md`](durability-matrix.md) defines the current evidence contract and explicitly separates logical process-crash recovery from power-loss durability. Compaction tests must run on every supported operating system because Rust documents that `std::fs::rename` has platform-specific behavior. The same-directory temporary-file rule should be asserted, and tests should distinguish logical correctness from power-loss durability. A future durability test must include directory-entry synchronization where the target platform supports it and document any unavoidable platform limitation.
+The [`durability-matrix.md`](durability-matrix.md) defines the current evidence contract and explicitly separates logical process-crash recovery from power-loss durability. Unix advisory-lock behavior is covered for concurrent opens and stale regular lock files; non-Unix and network-filesystem semantics remain unproven. Compaction tests must run on every supported operating system because Rust documents that `std::fs::rename` has platform-specific behavior. The same-directory temporary-file rule should be asserted, and tests should distinguish logical correctness from power-loss durability. A future durability test must include directory-entry synchronization where the target platform supports it and document any unavoidable platform limitation.
 
 ## Parser and adversarial testing
 

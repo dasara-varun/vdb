@@ -28,7 +28,7 @@ VDB is not finished as a production database. It is a working Rust MVP with a du
 | P1 | Memory-bounded storage | Full state and indexes are rebuilt in memory | Add segments, checkpoints, bounded caches, and size limits; streaming replay is implemented but the materialized working set remains memory-bound only by available process memory |
 | P1 | Local application API | CLI-only access limits integration | Add a localhost-only or IPC API with strict validation and explicit exposure controls |
 | P1 | Query planning | Current indexes cover simple equality and filtering still occurs in memory | Add explain plans, selectivity metrics, and only then consider compound/range indexes |
-| P2 | Stale-lock recovery | A lock file can survive an abnormal process exit | Prefer OS advisory locking or a carefully scoped liveness protocol; never auto-delete a live lock |
+| Done baseline / P0 follow-up | Stale-lock recovery | A lock file can survive an abnormal process exit | Unix now uses a safe nonblocking advisory lock and reuses stale regular lock files after process exit; retain the non-Unix fallback until cross-platform behavior is validated |
 | P2 | Model-backed Steward | Deterministic findings are safe but limited | Add optional private model explanation behind minimized context, typed output, approval, and red-team tests |
 | P2 | Replication | Distributed correctness adds ordering, conflict, identity, and operational complexity | Defer until storage, recovery, encryption, API, and observability are mature |
 
