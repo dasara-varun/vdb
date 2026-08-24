@@ -1,0 +1,25 @@
+flowchart LR
+    User[User / Application] --> CLI[CLI / SDK / HTTP API]
+    CLI --> Auth[Auth + request validation + query budgets]
+    Auth --> Store[Document store]
+    Store --> Durable[Embedded storage + WAL + snapshots]
+    Store --> Metrics[Health telemetry]
+    Metrics --> Rules[Deterministic diagnostics]
+    Metrics --> Context[Redacted context builder]
+    Context --> Model[Optional local/private model]
+    Rules --> Finding[Evidence-linked finding]
+    Model --> Finding
+    Finding --> Plan[Typed recommendation plan]
+    Plan --> Approval[Policy + human approval]
+    Approval --> Executor[Restricted executor]
+    Executor --> Store
+    Store --> Verify[Postcondition verifier]
+    Verify --> Audit[Append-only audit ledger]
+    Durable --> Sandbox[Restore verification sandbox]
+
+    classDef core fill:#eaf7ee,stroke:#2f855a,stroke-width:1px;
+    classDef secure fill:#e8f0fe,stroke:#315aa8,stroke-width:1px;
+    classDef ai fill:#fff4df,stroke:#b7791f,stroke-width:1px;
+    class Store,Durable,Metrics,Sandbox core;
+    class Auth,Approval,Executor,Verify,Audit secure;
+    class Rules,Context,Model,Finding,Plan ai;
