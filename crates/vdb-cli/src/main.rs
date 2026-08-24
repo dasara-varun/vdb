@@ -57,6 +57,9 @@ enum Command {
     Backup {
         destination: PathBuf,
     },
+    BackupVerify {
+        destination: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -156,5 +159,6 @@ fn main() -> Result<()> {
             print_json(&findings)
         }
         Command::Backup { destination } => print_json(&store.backup(destination)?),
+        Command::BackupVerify { destination } => print_json(&VdbStore::verify_backup(destination)?),
     }
 }

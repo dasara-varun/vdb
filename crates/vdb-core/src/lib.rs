@@ -82,7 +82,7 @@ pub struct SchemaReport {
     pub fields: BTreeMap<String, Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupManifest {
     pub source: String,
     pub destination: String,
@@ -344,6 +344,29 @@ impl VdbStore {
         Ok(manifest)
     }
 
+    pub fn verify_backup(destination: impl AsRef<Path>) -> Result<Health, VdbError> {
+        let destination = destination.as_ref();
+        let bytes = fs::read(destination)?;
+        if bytes.len() < 4 {
+            return Err(VdbError::Serialization(
+                "backup is too small to contain a WAL record".to_string(),
+            ));
+        }
+        let manifest_path = PathBuf::from(format!("{}.manifest.json", destination.display()));
+        if manifest_path.exists() {
+            let manifest: BackupManifest = serde_json::from_slice(&fs::read(manifest_path)?)
+                .map_err(|error| VdbError::Serialization(error.to_string()))?;
+            let digest = Sha256::digest(&bytes);
+            if manifest.sha256 != format!("{digest:x}") || manifest.bytes != bytes.len() as u64 {
+                return Err(VdbError::Serialization(
+                    "backup checksum or size does not match manifest".to_string(),
+                ));
+            }
+        }
+        let restored = VdbStore::open(destination)?;
+        Ok(restored.health())
+    }
+
     fn require_collection(&self, name: &str) -> Result<(), VdbError> {
         validate_collection(name)?;
         if self.state.read().collections.contains_key(name) {
@@ -528,6 +551,22 @@ mod tests {
             error,
             VdbError::VersionConflict { current: 2, .. }
         ));
+    }
+
+    #[test]
+    fn backup_can_be_verified_and_reopened() {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("data.vdb");
+        let destination = directory.path().join("backup.vdb");
+        let store = VdbStore::open(&source).unwrap();
+        store.create_collection("notes").unwrap();
+        store
+            .put("notes", "n1", serde_json::json!({"text": "hello"}), None)
+            .unwrap();
+        store.backup(&destination).unwrap();
+        let health = VdbStore::verify_backup(&destination).unwrap();
+        assert_eq!(health.collections, 1);
+        assert_eq!(health.documents, 1);
     }
 
     #[test]
