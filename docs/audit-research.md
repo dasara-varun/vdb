@@ -23,3 +23,9 @@ The current VDB compaction path writes and `sync_data`s a same-directory tempora
 ## Embedded-database durability comparison
 
 SQLite’s atomic-commit documentation emphasizes that crash safety depends on a defined commit protocol, filesystem locking, and flush behavior, and it includes dedicated sections for failure modes such as incomplete flushes, partial deletions, garbage writes, and rename/delete handling. VDB should use the same discipline: specify assumptions, test interruption points, distinguish logical recovery from power-loss durability, and avoid promising more than the target filesystem can provide. Source: https://www.sqlite.org/atomiccommit.html
+
+## Security hardening research
+
+Rust documents `OpenOptionsExt::mode` as a Unix-only method for setting permission bits on newly created files, with the operating system’s `umask` applied to produce final permissions. VDB can use this for restrictive creation of database and lock files on Unix while retaining a separate portable path for other platforms. Source: https://doc.rust-lang.org/std/os/unix/fs/trait.OpenOptionsExt.html
+
+OWASP’s Cryptographic Storage guidance recommends designing protection from a threat model, minimizing sensitive data, using established cryptographic primitives, and treating key management as a separate architectural concern. VDB should not implement custom encryption casually; it should adopt a reviewed authenticated-encryption design with explicit key lifecycle and recovery procedures. Source: https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html

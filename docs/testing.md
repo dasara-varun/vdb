@@ -8,15 +8,15 @@ A database is trustworthy only when its behavior is tested under normal requests
 
 | Layer | Scope | Current status |
 |---|---|---|
-| Unit tests | Document validation, versions, filters, schema types, WAL replay, backup verification | Implemented in `vdb-core` |
+| Unit tests | Document validation, versions, filters, schema types, WAL replay, backup verification, format compatibility, and semantic record validation | Implemented in `vdb-core` |
 | Lock and compaction regressions | First-open lock ordering, atomic WAL rotation, post-compaction writes, index preservation | Implemented in `vdb-core` |
 | CLI contract tests | Command parsing, JSON output, error codes, path handling | Next milestone |
 | Property tests | Random document and operation sequences preserve invariants | Planned |
 | Crash tests | Interrupt writes and compaction; no acknowledged record is silently lost | Planned |
 | Corruption tests | Alter payload, length, and checksum bytes; recovery fails closed | Partially covered by checksum logic |
-| Security tests | Reserved fields, size limits, path handling, unsafe code, privilege boundaries | Baseline implemented; expand with server mode |
+| Security tests | Reserved fields, size limits, bounded imports/configuration, private Unix modes, symlink paths, unsafe code, and privilege boundaries | Baseline implemented; expand with server mode |
 | Performance tests | Release-build throughput, p95/p99, replay, memory, WAL growth | Initial benchmark example implemented |
-| Compatibility tests | Versioned file formats, JSON Lines, and platform-specific replacement behavior | Partially implemented; expand cross-platform |
+| Compatibility tests | Format versions 1–2, version-preserving compaction snapshots, JSON Lines, and platform-specific replacement behavior | Partially implemented; expand cross-platform |
 | Supply-chain tests | Locked dependency resolution, RustSec advisories, license/source policy | Pending authentic crates.io lockfile |
 
 ## Invariants
@@ -31,7 +31,7 @@ Compaction tests must run on every supported operating system because Rust docum
 
 ## Parser and adversarial testing
 
-WAL length decoding, CBOR decoding, checksum validation, JSON Lines import, document-size limits, query limits, and Steward inputs are untrusted-byte boundaries. Add property tests and fuzz targets for these paths. Fuzz cases must be bounded in CPU, memory, and input size; each failure should be reduced to a deterministic regression fixture. Run sanitizers and thread/concurrency checks in a separate supported environment rather than making the ordinary developer loop unnecessarily slow.
+WAL length decoding, streaming CBOR decoding, checksum validation, semantic replay state transitions, JSON Lines import, document-size limits, query limits, path handling, and Steward inputs are untrusted-byte boundaries. The baseline suite now covers oversized imports, invalid version sequences, legacy format reopening, backup self-target rejection, private Unix modes, symlink rejection, and configuration limits. Add property tests and fuzz targets for the remaining parser and recovery paths. Fuzz cases must be bounded in CPU, memory, and input size; each failure should be reduced to a deterministic regression fixture. Run sanitizers and thread/concurrency checks in a separate supported environment rather than making the ordinary developer loop unnecessarily slow.
 
 ## Supply-chain testing
 

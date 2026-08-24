@@ -6,7 +6,7 @@
 
 ## Current MVP
 
-The current Rust rebuild provides a native workspace with a `vdb-core` library and `vdb` CLI. It uses a versioned `VDB1` header, an append-only, length-prefixed CBOR log, per-record SHA-256 checksums, an in-memory document index, optimistic document versions, bounded equality queries, schema reports, health metrics, verified backups, and snapshot manifests. Startup acquires the per-instance lock before header creation, and compaction rotates the WAL through a synchronized same-directory temporary file rather than rewriting the active file in place.
+The current Rust rebuild provides a native workspace with a versioned `VDB1` header, an append-only, length-prefixed CBOR log, per-record SHA-256 checksums, bounded streaming replay, semantic WAL validation, an in-memory document index, optimistic document versions, bounded equality queries and imports, schema reports, health metrics, verified backups, and snapshot manifests. Startup acquires the per-instance lock before header creation, database artifacts use private Unix modes, existing symlink targets are rejected, and compaction rotates the WAL through a synchronized same-directory temporary file rather than rewriting the active file in place.
 
 The Steward is currently deterministic and read-only. It reports safe findings rather than executing model-generated commands. A future local/private model may explain findings, but all changes must pass typed validation, policy, approval, and verification.
 
@@ -66,7 +66,7 @@ Before making changes, read [`AGENTS.md`](AGENTS.md), [`CONTRIBUTING.md`](CONTRI
 
 ## Status and limitations
 
-This is an MVP and not yet a production database. The current implementation uses an in-memory state map rebuilt from the versioned, checksummed WAL. It provides a single-process lock file, JSON Lines export/import, lightweight single-field equality indexes, verified backups, and atomic-path WAL compaction. It does not yet provide encryption at rest, authenticated encryption, OS-level advisory locks, memory-bounded storage, a query planner, replication, or a network server. A lock file can remain after an abnormal process exit, and filesystem replacement durability is platform-dependent. These are deliberate follow-on milestones, not hidden guarantees.
+This is an MVP and not yet a production database. The current implementation uses an in-memory state map and indexes rebuilt from a versioned, checksummed WAL; replay is streamed, but the resulting working set is not yet memory-bounded. It provides a single-process lock file, bounded JSON Lines import, semantic WAL validation, private Unix file modes, symlink rejection for common file paths, verified backups, and atomic-path WAL compaction. It does not yet provide encryption at rest, authenticated encryption, OS-level advisory locks, a query planner, replication, or a network server. A lock file can remain after an abnormal process exit, symlink checks do not close every platform-specific TOCTOU race, and filesystem replacement durability is platform-dependent. These are deliberate follow-on milestones, not hidden guarantees.
 
 ## License
 

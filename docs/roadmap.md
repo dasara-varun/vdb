@@ -2,15 +2,15 @@
 
 ## Completed Rust MVP
 
-The current `main` branch contains a fast Rust workspace with a local document store, nested JSON-like document payloads, CBOR WAL records, versioned file headers, per-record SHA-256 checksums, replay recovery, single-process instance locking, optimistic document versions, bounded equality queries, single-field equality indexes, schema reports, health diagnostics, snapshot manifests, backup verification, JSON Lines export/import, WAL compaction, a read-only Steward, CLI workflows, a release benchmark, automated tests, and GitHub Actions checks.
+The current `main` branch contains a fast Rust workspace with a local document store, nested JSON-like document payloads, CBOR WAL records, versioned file headers, per-record SHA-256 checksums, bounded streaming replay, semantic WAL validation, private Unix file modes, common-path symlink rejection, replay recovery, single-process instance locking, optimistic document versions, bounded equality queries and imports, single-field equality indexes, schema reports, health diagnostics, snapshot manifests, backup verification, JSON Lines export/import, WAL compaction with version-preserving snapshot records, a read-only Steward, CLI workflows, a release benchmark, automated tests, documentation consistency checks, and GitHub Actions checks.
 
 ## Phase 1: Production storage safety
 
-The next production milestone is encryption at rest with a reviewed key-management design, stronger backup consistency guarantees, explicit storage quotas, and extended fault-injection testing. VDB should not claim production readiness until these controls are implemented and reviewed.
+The next production milestone is authenticated encryption at rest with a reviewed key-management design, stronger backup consistency guarantees, explicit storage quotas, cross-platform filesystem validation, and extended fault-injection testing. VDB should not claim production readiness until these controls are implemented and reviewed.
 
 ## Phase 2: Query and memory scalability
 
-Extend equality indexes into a query planner, add selective compound or range indexes only when benchmark evidence justifies them, and replace the unbounded in-memory state map with a memory-bounded storage/index strategy. Every change must preserve versioning, checksums, recovery, and bounded work.
+Extend equality indexes into a query planner, add selective compound or range indexes only when benchmark evidence justifies them, and replace the unbounded in-memory state map with immutable segments, checkpoints, and a memory-bounded storage/index strategy. Replay is now streamed, but the materialized working set remains memory-bound only by available process memory. Every change must preserve versioning, checksums, recovery, and bounded work.
 
 ## Phase 3: Local application API
 

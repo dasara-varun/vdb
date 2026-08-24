@@ -19,21 +19,21 @@ System fields are reserved. User payloads may contain nested objects and arrays.
 
 ## Core operations
 
-| Operation | Semantics |
-|---|---|
-| Create collection | Creates metadata and an empty collection; idempotent when requested |
-| Put document | Inserts or replaces by `_id`; supports optional expected version |
-| Get document | Returns one document or a typed not-found result |
-| Query | Uses bounded filters, projections, sort, limit, and cursor pagination |
-| Patch document | Applies a validated patch only when expected version matches |
-| Delete document | Requires explicit id or bounded filter; destructive bulk deletes require approval |
-| Create index | Creates a validated single-field equality index |
-| List indexes | Reports indexed fields and document/value coverage |
-| Health | Returns storage, errors, query latency, schema, and backup summaries |
-| Backup | Creates a checksummed snapshot manifest |
-| Backup verify | Reopens a snapshot and validates its manifest and health |
-| Export | Writes portable JSON Lines records |
-| Import | Validates JSON Lines records and writes them through normal document rules |
+| Operation | MVP semantics | Status |
+|---|---|---|
+| Create collection | Creates metadata and an empty collection; idempotent when requested | Implemented |
+| Put document | Inserts or replaces by `_id`; supports optional expected version | Implemented |
+| Get document | Returns one document or a typed not-found result | Implemented |
+| Query | Uses bounded top-level equality filters, returns up to the requested limit, and orders by most recent update; projections, cursors, and range predicates are not yet implemented | Implemented baseline |
+| Patch document | Planned convenience operation; callers currently send a complete replacement with an expected version | Planned |
+| Delete document | Deletes one explicit document ID with an optional expected version; bulk deletes are not implemented | Implemented baseline |
+| Create index | Creates a validated single-field equality index | Implemented |
+| List indexes | Reports indexed fields and document/value coverage | Implemented |
+| Health | Returns current collection, document, payload, WAL-size, and configured-limit summaries | Implemented baseline |
+| Backup | Creates a private checksummed snapshot and manifest; refuses existing output paths | Implemented baseline |
+| Backup verify | Reopens a snapshot and validates its manifest and health | Implemented baseline |
+| Export | Writes portable JSON Lines records to a new output path | Implemented |
+| Import | Bounds and validates JSON Lines records, then writes them through normal document rules | Implemented baseline |
 
 ## Conditional updates
 
@@ -64,7 +64,7 @@ A conflict returns:
 
 ## Query limits
 
-Every query has a maximum result count, maximum document bytes, timeout, and optional scan budget. The API should require cursor pagination for large result sets. VDB should reject unbounded destructive filters and return a clear remediation message.
+The current core accepts a result limit from 1 through 1000 and bounds documents to 1 MiB by default. It supports simple top-level equality filters and still materializes the working set in memory. Timeout budgets, scan budgets, projections, and cursor pagination are future API requirements rather than current MVP behavior. Future destructive operations must reject unbounded filters and return a clear remediation message.
 
 ## Health response
 
@@ -99,7 +99,7 @@ Any future action plan must use a typed allowlist. No API accepts arbitrary SQL,
 
 ## Error codes
 
-`INVALID_DOCUMENT`, `DOCUMENT_NOT_FOUND`, `VERSION_CONFLICT`, `QUERY_LIMIT_EXCEEDED`, `QUERY_TIMEOUT`, `COLLECTION_NOT_FOUND`, `INDEX_CONFLICT`, `BACKUP_FAILED`, `RESTORE_VERIFICATION_FAILED`, `UNAUTHORIZED`, `FORBIDDEN`, `APPROVAL_REQUIRED`, `POLICY_DENIED`, and `STORAGE_RECOVERY_REQUIRED`.
+The current Rust error surface includes invalid collection/document/path, collection or document not found, version conflict, invalid query limit, instance locked, unsupported format, unavailable storage handle, serialization, and I/O failures. A future HTTP API should map these to stable machine-readable codes such as `INVALID_DOCUMENT`, `DOCUMENT_NOT_FOUND`, `VERSION_CONFLICT`, `QUERY_LIMIT_EXCEEDED`, `COLLECTION_NOT_FOUND`, `BACKUP_FAILED`, `UNAUTHORIZED`, `FORBIDDEN`, and `STORAGE_RECOVERY_REQUIRED` only after the corresponding behavior exists and is tested.
 
 ## CLI examples
 

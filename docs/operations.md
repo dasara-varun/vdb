@@ -9,7 +9,7 @@ cargo run --release -- init --path ./data/app.vdb
 cargo run --release -- --path ./data/app.vdb collections create users
 ```
 
-VDB acquires a per-instance `.lock` file before creating or validating a new database header. This prevents ordinary concurrent opens of the same path, including the first-open race. The lock file is not yet an OS advisory lock and may remain after a crash; do not delete it automatically unless you have confirmed that no VDB process is using the database. Record the incident and follow the stale-lock recovery procedure agreed for the deployment.
+VDB acquires a per-instance `.lock` file before creating or validating a new database header. This prevents ordinary concurrent opens of the same path, including the first-open race. New database and lock files use Unix mode `0600`, and existing database files are tightened when opened. The lock file is not yet an OS advisory lock and may remain after a crash; do not delete it automatically unless you have confirmed that no VDB process is using the database. Record the incident and follow the stale-lock recovery procedure agreed for the deployment.
 
 ## Health check
 
@@ -35,7 +35,7 @@ The current index implementation is single-field and equality-oriented. It is re
 vdb --path ./data/app.vdb compact
 ```
 
-Compaction is serialized with writes. It writes a same-directory temporary WAL, synchronizes that file, closes the active handle, atomically replaces the database path, and reopens the append handle. It preserves current documents and index definitions. The temporary path includes the process ID and may need inspection or cleanup after an interrupted operation. Because filesystem directory-entry durability and replacement behavior vary, compaction should still be followed by a backup and health check.
+Compaction is serialized with writes. It writes a same-directory temporary WAL, synchronizes that file, records current documents as version-preserving `SnapshotPut` records, closes the active handle, atomically replaces the database path, and reopens the append handle. It preserves current documents and index definitions without replaying discarded update history. The temporary path includes the process ID and may need inspection or cleanup after an interrupted operation. Existing symbolic links are rejected for the database and compaction paths, but a complete race-free no-follow guarantee remains platform-specific. Because filesystem directory-entry durability and replacement behavior vary, compaction should still be followed by a backup and health check.
 
 ## Backup
 
@@ -56,7 +56,7 @@ If the file ends with an incomplete record, the MVP truncates the incomplete tai
 
 ## Resource limits
 
-The MVP limits documents to 1 MiB by default and queries to 1–1000 results. These are conservative defaults. Operators should monitor WAL growth, document count, payload bytes, disk usage, process memory, and restart replay time. The complete working set and equality indexes are currently held in memory, so this MVP is not suitable for datasets larger than the available memory budget.
+The MVP limits documents to 1 MiB by default, configured document limits to 64 MiB, JSON Lines import records to 2 MiB, WAL records to 64 MiB, and queries to 1–1000 results. WAL replay is streamed, but the materialized working set and equality indexes are currently held in memory, so this MVP is not suitable for datasets larger than the available memory budget. Operators should monitor WAL growth, document count, payload bytes, disk usage, process memory, and restart replay time.
 
 ## Current limitations
 

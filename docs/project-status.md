@@ -7,7 +7,7 @@
 
 ## Executive summary
 
-VDB is a Rust-based, local-first document NoSQL database MVP. It uses a versioned `VDB1` file header, append-only CBOR WAL records, per-record SHA-256 checksums, replay recovery, optimistic document versions, bounded equality queries, equality indexes, health and schema reports, verified backups, JSON Lines portability, safe baseline compaction, and a deterministic read-only Steward.
+VDB is a Rust-based, local-first document NoSQL database MVP. It uses a versioned `VDB1` file header, append-only CBOR WAL records, per-record SHA-256 checksums, bounded streaming replay, semantic WAL validation, private Unix file modes, common-path symlink rejection, optimistic document versions, bounded equality queries and imports, equality indexes, health and schema reports, verified backups, JSON Lines portability, safe version-preserving compaction, and a deterministic read-only Steward.
 
 The project is **not production-ready**. Its current state is deliberately small and inspectable. Encryption at rest, authenticated encryption, OS-level advisory locking, stale-lock recovery, memory-bounded storage, a query planner, application API, authentication, replication, and a model-backed Steward remain future work.
 
@@ -16,15 +16,15 @@ The project is **not production-ready**. Its current state is deliberately small
 | Area | Status | Evidence or source of truth |
 |---|---|---|
 | Rust workspace and CLI | Implemented | `crates/vdb-core`, `crates/vdb-cli`, `README.md` |
-| `VDB1` header/version validation | Implemented | `docs/data-format.md`, core tests |
+| `VDB1` header/version validation | Implemented for versions 1–2, with version-preserving compaction snapshots | `docs/data-format.md`, core tests |
 | Append-only CBOR WAL | Implemented | `docs/data-format.md`, core implementation |
-| Record checksum and replay recovery | Implemented baseline | `docs/data-format.md`, corruption test |
+| Record checksum and replay recovery | Implemented baseline with bounded streaming and semantic checks | `docs/data-format.md`, corruption and adversarial tests |
 | Document CRUD and optimistic versions | Implemented | `docs/api.md`, core tests |
 | Bounded equality query | Implemented | `docs/api.md`, query tests |
 | Single-field equality index | Implemented baseline | `docs/performance.md`, index tests |
 | Health and schema reports | Implemented | CLI and core tests |
 | Verified backup and JSON Lines portability | Implemented baseline | `docs/operations.md`, backup/export tests |
-| WAL compaction | Implemented safer baseline | `docs/data-format.md`, compaction regression test |
+| WAL compaction | Implemented safer version-preserving baseline | `docs/data-format.md`, compaction regression test |
 | Startup process lock ordering | Implemented baseline | `docs/operations.md`, lock regression test |
 | Deterministic read-only Steward | Implemented baseline | `docs/steward.md`, CLI output |
 | Encryption/key management | Planned, P0 | `docs/improvement-plan.md`, `docs/security.md` |
@@ -34,16 +34,18 @@ The project is **not production-ready**. Its current state is deliberately small
 | Model-backed Steward | Planned, P2 | `docs/steward.md`, `docs/security.md` |
 | Replication | Deferred, P2 | `docs/roadmap.md`, `docs/production-gap-audit.md` |
 | Documentation system | Implemented baseline | `AGENTS.md`, `CONTRIBUTING.md`, `docs/README.md`, `docs/documentation-maintenance.md` |
+| Filesystem and input hardening | Implemented baseline | `docs/security.md`, core adversarial tests |
+| Semantic WAL replay validation | Implemented baseline | `docs/data-format.md`, version and corruption tests |
 
 ## Validation snapshot
 
-The latest audited state passed the following local checks: formatting, Clippy with warnings denied, all workspace tests, release build, and an end-to-end CLI smoke workflow covering initialization, collection creation, CRUD, query, index creation/listing, backup verification, export, compaction, health, Steward output, and reopen. GitHub Actions run `32699151944` passed for commit `e14447a`.
+The latest audited Rust state passed formatting, Clippy with warnings denied, 19 core tests plus workspace tests, release build, and an end-to-end CLI smoke workflow covering initialization, collection creation, CRUD, query, index creation/listing, backup verification, export, compaction, health, Steward output, and reopen. The additional tests cover oversized imports, invalid WAL version sequences, legacy format reopening, unsupported-format rejection, backup self-target rejection, backup/export overwrite protection, Unix private modes for database/lock/backup/manifest files, symlink rejection, bounded configuration, and larger configured documents. The current security/storage changes require a new CI run before handoff.
 
 These results demonstrate correctness for the tested MVP paths; they do not prove power-loss durability on every filesystem, production capacity, encryption, multi-process safety beyond the documented lock-file behavior, or model safety under a future LLM adapter.
 
 ## Current priorities
 
-The next highest-value work is to generate and commit an authentic crates.io `Cargo.lock` from a clean environment, switch CI to locked builds, and add RustSec dependency auditing. In parallel, the project should define a cross-platform durability matrix, add crash/fuzz testing, design encryption and key management, and prototype memory-bounded segments/checkpoints before adding remote serving or model autonomy.
+The next highest-value work is to generate and commit an authentic crates.io `Cargo.lock` from a clean environment, switch CI to locked builds, and add RustSec dependency auditing. In parallel, the project should define a cross-platform durability matrix, add crash/fuzz testing, design authenticated encryption and key management, replace the remaining in-memory materialized state with bounded segments/checkpoints, and close the platform-specific no-follow and advisory-lock gaps before adding remote serving or model autonomy.
 
 ## How to update this snapshot
 
