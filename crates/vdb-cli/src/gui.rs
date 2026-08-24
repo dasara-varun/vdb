@@ -414,13 +414,12 @@ fn write_response(stream: &mut TcpStream, response: Response) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_DATABASE: AtomicU64 = AtomicU64::new(0);
 
     fn store() -> VdbStore {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let suffix = NEXT_TEST_DATABASE.fetch_add(1, Ordering::Relaxed);
         let path =
             std::env::temp_dir().join(format!("vdb-gui-test-{}-{suffix}.vdb", std::process::id()));
         let _ = std::fs::remove_file(&path);
