@@ -62,8 +62,12 @@ if ! grep -Fq 'docs/project-status.md' docs/README.md; then
   exit 1
 fi
 
-if [[ -f Cargo.lock ]]; then
-  printf 'Cargo.lock exists; verify it was generated from the intended crates.io registry before committing\n' >&2
+if [[ ! -f Cargo.lock ]]; then
+  printf 'Cargo.lock is missing; production builds require the committed authentic lockfile\n' >&2
+  exit 1
+fi
+if ! grep -Fq 'version = 3' Cargo.lock || grep -Fq 'Could not get crate checksum' Cargo.lock || grep -Fq 'PLACEHOLDER' Cargo.lock; then
+  printf 'Cargo.lock is missing the expected lockfile version or contains a placeholder checksum\n' >&2
   exit 1
 fi
 

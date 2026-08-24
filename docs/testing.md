@@ -17,7 +17,7 @@ A database is trustworthy only when its behavior is tested under normal requests
 | Security tests | Reserved fields, size limits, bounded imports/configuration, private Unix modes, symlink paths, Unix advisory locks, unsafe code, privilege boundaries, quota rejection, and GUI exposure/method/parser/output/header controls | Baseline implemented; GUI route and rendering regressions covered; expand with cross-platform and server-mode validation |
 | Performance tests | Release-build throughput, p95/p99, replay, memory, WAL growth | Initial benchmark example implemented |
 | Compatibility tests | Format versions 1–2, version-preserving compaction snapshots, JSON Lines, atomic import, nested equality queries, quota-preserving compaction failure, restore-to-new-path, platform-specific replacement behavior, and bounded GUI read routes | Implemented baseline; native Ubuntu/macOS/Windows workspace-test job added; expand crash/replacement coverage |
-| Supply-chain tests | Locked dependency resolution, RustSec advisories, license/source policy | Pending authentic crates.io lockfile |
+| Supply-chain tests | Locked dependency resolution, RustSec advisories, license/source policy | Authentic lockfile and locked CI resolution are implemented; RustSec audit is now enforced by the pinned `rustsec/audit-check@v2.0.0` job; license/source policy remains pending |
 
 ## Invariants
 
@@ -35,7 +35,7 @@ WAL length decoding, streaming CBOR decoding, checksum validation, semantic repl
 
 ## Supply-chain testing
 
-Once an authentic crates.io `Cargo.lock` is available, CI should use `--locked` and run RustSec `cargo-audit`. Add `cargo-deny` when license, source, duplicate-version, and advisory policies have been agreed. Dependabot or an equivalent scheduled dependency update process should produce reviewable pull requests. The current sandbox-generated lockfile is intentionally not committed because its mirror-specific placeholder checksums are not valid for GitHub CI.
+The repository now commits a Cargo.lock whose registry checksums were audited against the official sparse crates.io index, and CI uses `--locked` for Clippy, tests, release builds, and native platform tests. CI also runs the pinned official RustSec `rustsec/audit-check@v2.0.0` action; an advisory failure must be fixed or explicitly reviewed before release. Add `cargo-deny` when license, source, duplicate-version, and advisory policies have been agreed. Dependabot or an equivalent scheduled dependency update process should continue producing reviewable pull requests. The lockfile must be regenerated through a crates.io-capable environment and reviewed whenever dependency versions change.
 
 ## Release gate
 

@@ -39,7 +39,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build --release
 ```
 
-The development sandbox may use a locally vendored Debian Rust registry, while GitHub Actions resolves dependencies from the standard crates.io registry. The repository intentionally does not commit a mirror-specific lockfile until an authentic crates.io lockfile can be generated; the release target is a clean crates.io lockfile with locked CI builds. See [`docs/improvement-plan.md`](docs/improvement-plan.md) for the ranked next steps.
+GitHub Actions resolves the committed dependency graph with `--locked` from the standard crates.io registry, and the repository includes a Cargo.lock whose registry checksums were audited against the official sparse index. The development sandbox may still use a locally vendored Debian Rust registry; that mirror can report source-checksum comparisons even when the committed crates.io checksums are correct. See [`docs/testing.md`](docs/testing.md) and [`docs/improvement-plan.md`](docs/improvement-plan.md) for dependency and supply-chain policy.
 
 ## User experience
 
