@@ -1066,8 +1066,9 @@ fn ensure_header(path: &Path) -> Result<(), VdbError> {
 }
 
 fn encode_wal_record(record: &WalRecord) -> Result<Vec<u8>, VdbError> {
-    let payload =
-        serde_cbor::to_vec(record).map_err(|error| VdbError::Serialization(error.to_string()))?;
+    let mut payload = Vec::new();
+    ciborium::ser::into_writer(record, &mut payload)
+        .map_err(|error| VdbError::Serialization(error.to_string()))?;
     if payload.len() > MAX_WAL_RECORD_BYTES {
         return Err(VdbError::InvalidDocument(
             "WAL record is too large".to_string(),
@@ -1372,8 +1373,9 @@ fn validate_document(data: &Value, max_bytes: usize) -> Result<(), VdbError> {
             )));
         }
     }
-    let encoded =
-        serde_cbor::to_vec(data).map_err(|error| VdbError::Serialization(error.to_string()))?;
+    let mut encoded = Vec::new();
+    ciborium::ser::into_writer(data, &mut encoded)
+        .map_err(|error| VdbError::Serialization(error.to_string()))?;
     if encoded.len() > max_bytes {
         return Err(VdbError::InvalidDocument(format!(
             "document is {} bytes; maximum is {max_bytes}",
@@ -1394,8 +1396,9 @@ fn matches_filter(data: &Value, filter: Option<&Map<String, Value>>) -> bool {
 }
 
 fn serialized_payload_bytes(value: &Value) -> Result<u64, VdbError> {
-    serde_cbor::to_vec(value)
-        .map(|bytes| bytes.len() as u64)
+    let mut encoded = Vec::new();
+    ciborium::ser::into_writer(value, &mut encoded)
+        .map(|()| encoded.len() as u64)
         .map_err(|error| VdbError::Serialization(error.to_string()))
 }
 
@@ -1466,7 +1469,7 @@ fn replay_wal(
                 "WAL checksum mismatch; storage recovery is required".to_string(),
             ));
         }
-        let record: WalRecord = serde_cbor::from_slice(&payload)
+        let record: WalRecord = ciborium::de::from_reader(payload.as_slice())
             .map_err(|error| VdbError::Serialization(error.to_string()))?;
         validate_wal_record(&record, max_document_bytes)?;
         apply_record(

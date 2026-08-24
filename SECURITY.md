@@ -18,7 +18,7 @@ The project does not promise a fixed response time while it remains an MVP. Repo
 
 ## Dependency and release security
 
-Dependency changes require review of their source, license, advisory status, and transitive graph. The desired release posture is an authentic committed crates.io `Cargo.lock`, locked CI, RustSec auditing, dependency update pull requests, checksummed release archives, and target-platform validation. Until those gates are complete, VDB releases must retain the MVP limitations in the release notes.
+Dependency changes require review of their source, license, advisory status, and transitive graph. The desired release posture is an authentic committed crates.io `Cargo.lock`, locked CI, RustSec auditing, cargo-deny enforcement for licenses/sources/advisories and external wildcard versions, dependency update pull requests, checksummed release archives, and target-platform validation. VDB retains `wildcards = "deny"`; the only current wildcard exception is the intentional private workspace path dependency, covered by cargo-deny’s documented `allow-wildcard-paths` behavior. The former `serde_cbor` unmaintained finding was remediated by migrating to maintained `ciborium`, not by suppressing the advisory. Until all gates are complete, VDB releases must retain the MVP limitations in the release notes.
 
 ## Safe disclosure
 
