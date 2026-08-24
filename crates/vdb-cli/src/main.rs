@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod gui;
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value};
@@ -67,6 +69,10 @@ enum Command {
         collection: String,
     },
     Health,
+    Gui {
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+    },
     Steward {
         #[arg(long)]
         collection: Option<String>,
@@ -110,6 +116,9 @@ fn main() -> Result<()> {
     if matches!(cli.command, Command::Init) {
         let _store = VdbStore::open_with_options(&cli.path, options).context("initialize VDB")?;
         return print_json(&serde_json::json!({"status": "initialized", "path": cli.path}));
+    }
+    if let Command::Gui { port } = cli.command {
+        return gui::serve(&cli.path, options, port);
     }
     if let Command::Restore {
         source,
@@ -173,6 +182,7 @@ fn main() -> Result<()> {
         }
         Command::IndexList { collection } => print_json(&store.list_indexes(&collection)?),
         Command::Health => print_json(&store.health()),
+        Command::Gui { .. } => unreachable!(),
         Command::Steward { collection } => {
             let findings = if let Some(collection) = collection {
                 let schema = store.schema_report(&collection, 100)?;
@@ -272,5 +282,11 @@ mod tests {
                 if source.as_path() == std::path::Path::new("backup.vdb")
                     && destination.as_path() == std::path::Path::new("restored.vdb")
         ));
+    }
+
+    #[test]
+    fn parses_read_only_gui_port() {
+        let cli = Cli::try_parse_from(["vdb", "gui", "--port", "4317"]).unwrap();
+        assert!(matches!(cli.command, Command::Gui { port: 4317 }));
     }
 }

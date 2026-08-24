@@ -4,7 +4,7 @@
 
 VDB reduces risk by reducing authority. The database remains the source of truth, validation and replay are deterministic, and the Steward is an untrusted analyst. VDB should fail closed when a request is malformed, over budget, outside scope, or inconsistent with the storage contract.
 
-The current MVP is local-first and does not provide authentication, remote serving, encryption at rest, or a model with mutation authority. Security statements in this document distinguish **implemented baseline controls** from **planned production controls**.
+The current MVP is local-first and does not provide authentication, remote serving, encryption at rest, or a model with mutation authority. The opt-in browser GUI is loopback-only and read-only, but loopback is not authentication and the GUI must not be exposed beyond the local device. Security statements in this document distinguish **implemented baseline controls** from **planned production controls**.
 
 ## Implemented baseline posture
 
@@ -23,16 +23,18 @@ The Rust core currently applies the following controls:
 | Input and storage budgets | Document size, configured maximum size, query result count, WAL record size, JSON Lines record size and 64 MiB batch size, and configured WAL size are bounded | Reduces memory, disk-exhaustion, and denial-of-service risk; quota checks happen before normal append, atomic import, and compaction replacement; the complete working set is still in memory |
 | Backup verification and restore | Verification and restore require a present, intact manifest, validate checksum and size, reject symlinked paths, refuse destination overwrites, and reopen the restored database | Prevents file-only or redirected artifacts from being reported as verified and keeps recovery isolated; manifests are not authenticated security envelopes and restore drills remain necessary |
 | Steward authority | Deterministic findings are read-only and do not execute generic commands | Limits prompt-injection impact; a future model adapter needs additional isolation |
+| Local GUI boundary | Explicit CLI command binds an embedded interface to `127.0.0.1`; only bounded `GET` routes are available | Improves local inspection without granting mutation authority; loopback is not authentication and proxy/forwarding exposure is prohibited |
+| GUI request/output handling | Request lines and query values are bounded; malformed methods/paths/encoding are rejected; HTML output is escaped; responses use CSP, `nosniff`, no-store, no-referrer, and no framing headers | Reduces common parser, XSS, caching, and embedding risks; no browser security boundary or authenticated API exists |
 
 Rust’s Unix `OpenOptionsExt::mode` sets permissions for newly created files and the operating system applies the `umask` to the requested mode.[1] The implementation uses this facility only on Unix and documents the platform boundary rather than pretending that one permission API is portable.
 
 ## Default posture
 
-Operators should run VDB as a non-root user in a user-owned directory with restrictive directory permissions. Sensitive data should use filesystem or volume encryption until database-level authenticated encryption is implemented. Remote access, external model calls, and automatic changes are not available in the MVP and should remain opt-in in future releases.
+Operators should run VDB as a non-root user in a user-owned directory with restrictive directory permissions. Sensitive data should use filesystem or volume encryption until database-level authenticated encryption is implemented. Remote access, external model calls, and automatic changes are not available in the MVP and should remain opt-in in future releases. The GUI’s local listener is not a remote-access feature; never bind it to a LAN address or place it behind a forwarding proxy.
 
 ## Identity and authorization
 
-The MVP has no network authentication or multi-user authorization. The Unix lock path now uses a safe rustix wrapper around the platform advisory-lock primitive; the non-Unix path remains conservative until a cross-platform locking abstraction and evidence are available. Future application, administrator, backup, and Steward identities must be separate. Any future action capability must be short-lived, scoped to an instance and collection, restricted by operation type, bounded by resource budget, and recorded in the audit ledger. The authorization model should be deny-by-default: a capability must specify its actor, resource, operation, expiry, budget, and approval requirement.
+The MVP has no network authentication or multi-user authorization. The read-only GUI does not change this: a loopback listener can still be reached by local processes and must not gain mutation endpoints without a new authorization design. The Unix lock path now uses a safe rustix wrapper around the platform advisory-lock primitive; the non-Unix path remains conservative until a cross-platform locking abstraction and evidence are available. Future application, administrator, backup, and Steward identities must be separate. Any future action capability must be short-lived, scoped to an instance and collection, restricted by operation type, bounded by resource budget, and recorded in the audit ledger. The authorization model should be deny-by-default: a capability must specify its actor, resource, operation, expiry, budget, and approval requirement.
 
 ## AI threat model
 
@@ -66,7 +68,7 @@ Backup success means more than a file being written. VDB must record snapshot ch
 
 ## Secure development requirements
 
-The project should maintain dependency reproducibility, secret scanning, static analysis, bounded parsers, property and fuzz tests for document and WAL boundaries, crash-injection tests for durability, cross-platform filesystem tests, and adversarial tests for prompt injection and unsafe action plans. Security-sensitive changes require a threat-model update, regression coverage, and explicit limitation text.
+The project should maintain dependency reproducibility, secret scanning, static analysis, bounded parsers, property and fuzz tests for document and WAL boundaries, crash-injection tests for durability, cross-platform filesystem tests, and adversarial tests for prompt injection and unsafe action plans. Security-sensitive changes require a threat-model update, regression coverage, and explicit limitation text. GUI changes additionally require route, method, request-size, output-escaping, response-header, and exposure-boundary tests.
 
 ## References
 

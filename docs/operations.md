@@ -2,7 +2,7 @@
 
 ## Local deployment
 
-Build the release binary with `cargo build --release`. Create a database in a user-owned directory and keep the file permissions restricted to the application user. The MVP has no network server, so the safest deployment is a local process with application-level access through the CLI or a future local API.
+Build the release binary with `cargo build --release`. Create a database in a user-owned directory and keep the file permissions restricted to the application user. The safest deployment remains a local process with application-level access through the CLI. An opt-in inspection GUI is available, but it is deliberately loopback-only and read-only rather than a general network server.
 
 ```bash
 cargo run --release -- init --path ./data/app.vdb
@@ -19,6 +19,19 @@ vdb --path ./data/app.vdb steward --collection users
 ```
 
 The health output is an operational summary, not a durability guarantee. It reports the current in-memory state and WAL size. The Steward is read-only in the MVP.
+
+## Local read-only GUI
+
+Start the GUI explicitly when local browser inspection is useful:
+
+```bash
+vdb --path ./data/app.vdb gui
+vdb --path ./data/app.vdb gui --port 4317
+```
+
+The command prints a URL such as `http://127.0.0.1:4317`; copy it into a browser yourself. Port `0` (the default) asks the operating system for an ephemeral port. The GUI shows health, collections, and a bounded document sample. It accepts only `GET`, serves embedded local HTML/CSS, and uses the same core read and query limits as the CLI. It does not mutate data or run backup, restore, compaction, import, export, or Steward actions.
+
+Loopback is not authentication. Do not bind or expose the GUI through a LAN address, reverse proxy, port forwarding, container bridge, public hostname, or shared workstation. Stop it with Ctrl-C before making recovery or maintenance changes. Use the CLI for all writes and operational actions. The GUI is a developer-experience baseline and does not change the production-readiness gates.
 
 ## Indexes and compaction
 
@@ -68,7 +81,7 @@ Use [`installation.md`](installation.md) for native Linux, macOS, and Windows bu
 
 ## Current limitations
 
-The MVP does not yet provide encryption at rest, authenticated encryption, network serving, replication, authentication, production-grade key management, OS-level advisory locks, memory-bounded storage, a query planner, or a model-backed Steward. The local implementation does provide a single-process lock file, secondary equality indexes, bounded queries, checksummed/versioned records, WAL compaction, backup verification, and JSON Lines portability. Do not deploy it for critical data until encryption, lock semantics, server isolation, crash testing, dependency auditing, and the recovery program are implemented and reviewed.
+The MVP does not yet provide encryption at rest, authenticated encryption, remote serving, replication, authentication, production-grade key management, memory-bounded storage, a query planner, or a model-backed Steward. The local GUI is not remote serving: it provides only an opt-in loopback read-only inspection surface and has no authentication. The local implementation does provide a single-process lock file, secondary equality indexes, bounded queries, checksummed/versioned records, WAL compaction, backup verification, and JSON Lines portability. Do not deploy it for critical data until encryption, lock semantics, API security, crash testing, dependency auditing, and the recovery program are implemented and reviewed.
 
 ## Incident record
 

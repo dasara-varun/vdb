@@ -27,6 +27,8 @@ jobs:
         run: cargo test --workspace
       - name: Release build
         run: cargo build --workspace --release
+      - name: GUI smoke
+        run: ./scripts/gui-smoke.sh target/release/vdb
 
   platform-tests:
     name: tests / ${{ matrix.os }}
