@@ -1,0 +1,18 @@
+flowchart TD
+    Detect[Health rule detects condition] --> Evidence[Preserve evidence + scope]
+    Evidence --> Classify[Classify severity and risk]
+    Classify --> Snapshot[Create or verify snapshot]
+    Snapshot --> Sandbox[Restore / simulate in sandbox]
+    Sandbox --> Plan[Create typed plan with cost + rollback]
+    Plan --> Policy{Policy allows?}
+    Policy -- No --> Deny[Reject and audit]
+    Policy -- Yes --> Approval{Approval required?}
+    Approval -- Yes --> Human[Human reviews evidence]
+    Approval -- No --> Canary[Canary or bounded execution]
+    Human -- Reject --> Deny
+    Human -- Approve --> Canary
+    Canary --> Execute[Restricted executor]
+    Execute --> Verify[Verify postconditions]
+    Verify --> Healthy{Healthy?}
+    Healthy -- Yes --> Commit[Commit result + audit]
+    Healthy -- No --> Rollback[Rollback / restore + audit]

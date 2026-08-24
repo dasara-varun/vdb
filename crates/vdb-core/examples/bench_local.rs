@@ -6,7 +6,7 @@ use vdb_core::VdbStore;
 fn main() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("bench.vdb");
-    let store = VdbStore::open(&path).expect("open store");
+    let store = VdbStore::open(path).expect("open store");
     store.create_collection("bench").expect("create collection");
 
     let writes = 10_000u64;

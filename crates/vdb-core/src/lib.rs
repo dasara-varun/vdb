@@ -339,10 +339,7 @@ impl VdbStore {
             created_at: Utc::now(),
         };
         let manifest_path = PathBuf::from(format!("{}.manifest.json", destination.display()));
-        fs::write(
-            &manifest_path,
-            serde_json::to_vec_pretty(&manifest).unwrap(),
-        )?;
+        fs::write(manifest_path, serde_json::to_vec_pretty(&manifest).unwrap())?;
         Ok(manifest)
     }
 
@@ -569,7 +566,7 @@ mod tests {
         let directory = tempdir().unwrap();
         let source = directory.path().join("data.vdb");
         let destination = directory.path().join("backup.vdb");
-        let store = VdbStore::open(&source).unwrap();
+        let store = VdbStore::open(source).unwrap();
         store.create_collection("notes").unwrap();
         store
             .put("notes", "n1", serde_json::json!({"text": "hello"}), None)
