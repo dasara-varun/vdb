@@ -12,6 +12,7 @@ required_files=(
   "docs/loop-engineering.md"
   "docs/installation.md"
   "docs/documentation-maintenance.md"
+  "docs/developer-research.md"
   "docs/durability-matrix.md"
   ".github/dependabot.yml"
   "docs/project-status.md"

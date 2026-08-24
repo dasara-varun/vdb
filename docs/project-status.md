@@ -20,10 +20,10 @@ The project is **not production-ready**. Its current state is deliberately small
 | Append-only CBOR WAL | Implemented | `docs/data-format.md`, core implementation |
 | Record checksum and replay recovery | Implemented baseline with bounded streaming and semantic checks | `docs/data-format.md`, corruption and adversarial tests |
 | Document CRUD and optimistic versions | Implemented | `docs/api.md`, core tests |
-| Bounded equality query | Implemented | `docs/api.md`, query tests |
+| Bounded equality query | Implemented baseline for top-level and dotted nested equality fields | `docs/api.md`, query tests |
 | Single-field equality index | Implemented baseline | `docs/performance.md`, index tests |
 | Health and schema reports | Implemented | CLI and core tests |
-| Verified backup and JSON Lines portability | Implemented baseline | `docs/operations.md`, backup/export tests |
+| Verified backup and JSON Lines portability | Implemented baseline; backup verification requires an intact manifest and import is prevalidated/atomic | `docs/operations.md`, backup/export/import tests |
 | WAL compaction | Implemented safer version-preserving baseline | `docs/data-format.md`, compaction regression test |
 | Configurable WAL storage quota | Implemented bounded write-time guard; default 512 MiB, configurable up to 16 GiB; compaction replacement is also bounded | `docs/api.md`, core quota and compaction-quota regression tests |
 | Cross-platform installation/release workflow | Implemented baseline artifact workflow and device guide; target-platform durability validation remains pending | `.github/workflows/release.yml`, `docs/installation.md` |
@@ -38,18 +38,18 @@ The project is **not production-ready**. Its current state is deliberately small
 | Documentation system | Implemented baseline | `AGENTS.md`, `CONTRIBUTING.md`, `docs/README.md`, `docs/documentation-maintenance.md` |
 | Agent-tooling and bounded-loop guidance | Implemented baseline; optional and non-authoritative | `docs/agent-tooling.md`, `docs/loop-engineering.md`, `CLAUDE.md` |
 | Security-conscious tool inventory | Implemented for the current development environment; refresh on tool changes | `docs/agent-tooling.md` |
-| Filesystem and input hardening | Implemented baseline | `docs/security.md`, core adversarial tests |
+| Filesystem and input hardening | Implemented baseline with strict backup paths and atomic bounded imports | `docs/security.md`, core adversarial tests |
 | Semantic WAL replay validation | Implemented baseline | `docs/data-format.md`, version and corruption tests |
 
 ## Validation snapshot
 
-The current local validation passed shell syntax and documentation consistency checks, formatting, Clippy with warnings denied, **23 core tests and 4 CLI contract tests**, workspace tests, release compilation, and the CLI lifecycle smoke workflow covering initialization, collection creation, CRUD, query, indexes, backup verification, export/import of multiple records, compaction, health, Steward output, reopen, and explicit quota behavior. The adversarial tests cover oversized imports, multiple-record JSON Lines import, deterministic truncated-tail recovery with valid-prefix preservation, invalid WAL version sequences, legacy format reopening, unsupported-format rejection, backup self-target rejection, backup/export overwrite protection, Unix private modes for database/lock/backup/manifest files, symlink rejection, bounded document and WAL configuration, larger configured documents, and no-partial-append quota failure. GitHub Actions run `32706132858` passed for commit `d8d97bf` (`test: document and cover truncated WAL recovery`).
+The current local validation passed formatting, Clippy with warnings denied, **28 core tests and 4 CLI contract tests**, workspace tests, and the nested-query/backup/import regression suite. The broader previous validation also passed shell syntax and documentation consistency checks, release compilation, and the CLI lifecycle smoke workflow. The current adversarial tests cover oversized and atomic imports, multiple-record JSON Lines import, deterministic truncated-tail recovery with valid-prefix preservation, invalid WAL version sequences, legacy format reopening, unsupported-format rejection, strict backup-manifest verification including symlink rejection, backup self-target rejection, backup/export overwrite protection, Unix private modes for database/lock/backup/manifest files, bounded document and WAL configuration, larger configured documents, nested indexed and unindexed equality queries, and no-partial-append quota failure. GitHub Actions run `32706132858` passed for commit `d8d97bf` (`test: document and cover truncated WAL recovery`); hosted CI for the current audit fixes is pending.
 
 These results demonstrate correctness for the tested MVP paths; they do not prove power-loss durability on every filesystem, production capacity, encryption, multi-process safety beyond the documented lock-file behavior, or model safety under a future LLM adapter.
 
 ## Current priorities
 
-The WAL quota and baseline release packaging are now implemented. The next highest-value work is to generate and commit an authentic crates.io `Cargo.lock` from a clean environment, switch CI to locked builds, and add RustSec dependency auditing. In parallel, the project should define a cross-platform durability matrix, add crash/fuzz testing, design authenticated encryption and key management, replace the remaining in-memory materialized state with bounded segments/checkpoints, and close the platform-specific no-follow and advisory-lock gaps before adding remote serving or model autonomy.
+The WAL quota, baseline release packaging, durability matrix, nested equality queries, strict backup verification, and atomic bounded import are now implemented baselines. The next highest-value work is to generate and commit an authentic crates.io `Cargo.lock` from a clean environment, switch CI to locked builds, and add RustSec dependency auditing. In parallel, the project should execute the durability matrix with cross-platform crash/fuzz testing, design authenticated encryption and key management, replace the remaining in-memory materialized state with bounded segments/checkpoints, and close the platform-specific no-follow and advisory-lock gaps before adding remote serving or model autonomy.
 
 ## How to update this snapshot
 

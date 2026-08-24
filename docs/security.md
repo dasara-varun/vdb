@@ -20,7 +20,8 @@ The Rust core currently applies the following controls:
 | Record integrity | Length-bounded CBOR records include SHA-256 checksums | Detects accidental or incomplete changes; SHA-256 is not encryption or attacker authentication |
 | Quota enforcement | `VdbOptions` defaults to a 512 MiB WAL quota and rejects writes or oversized compaction replacements above the configured limit | Prevents ordinary append growth beyond an operator-selected bound; it is not a filesystem quota and does not bound the in-memory state |
 | Replay validation | Collection names, IDs, documents, metadata, version sequencing, and record references are checked before state application | Rejects malformed or semantically inconsistent WAL data instead of manufacturing state |
-| Input and storage budgets | Document size, configured maximum size, query result count, WAL record size, JSON Lines record size, and configured WAL size are bounded | Reduces memory, disk-exhaustion, and denial-of-service risk; quota checks happen before normal append and compaction replacement; the complete working set is still in memory |
+| Input and storage budgets | Document size, configured maximum size, query result count, WAL record size, JSON Lines record size and 64 MiB batch size, and configured WAL size are bounded | Reduces memory, disk-exhaustion, and denial-of-service risk; quota checks happen before normal append, atomic import, and compaction replacement; the complete working set is still in memory |
+| Backup verification | Verification requires a present, intact manifest, validates checksum and size, rejects symlinked paths, and only then reopens the backup | Prevents file-only or redirected artifacts from being reported as verified; manifests are not authenticated security envelopes |
 | Steward authority | Deterministic findings are read-only and do not execute generic commands | Limits prompt-injection impact; a future model adapter needs additional isolation |
 
 Rust’s Unix `OpenOptionsExt::mode` sets permissions for newly created files and the operating system applies the `umask` to the requested mode.[1] The implementation uses this facility only on Unix and documents the platform boundary rather than pretending that one permission API is portable.
@@ -61,7 +62,7 @@ The production design should use a reviewed authenticated-encryption constructio
 
 Every future privileged event should record the timestamp, actor, capability, request hash, target, policy decision, approval, before/after configuration, result, error, and rollback reference. Audit records should be exportable for incident analysis, integrity-protected, and free of raw secrets.
 
-Backup success means more than a file being written. VDB must record snapshot checksums, metadata, source instance version, encryption key identifier when encryption exists, and last restore verification. Restore tests should use an isolated destination and compare checksums, document counts, and representative reads. The current backup manifest is a checksum and size verification mechanism, not an authenticated security envelope.
+Backup success means more than a file being written. VDB must record snapshot checksums, metadata, source instance version, encryption key identifier when encryption exists, and last restore verification. The current verifier requires the manifest rather than accepting a file-only copy. Restore tests should use an isolated destination and compare checksums, document counts, and representative reads. The current backup manifest is a checksum and size verification mechanism, not an authenticated security envelope.
 
 ## Secure development requirements
 

@@ -40,14 +40,14 @@ Errors explain what happened, why it happened, and what can be done next. Techni
 
 ## MVP acceptance criteria
 
-- Create, read, update, delete, filter, paginate, and TTL operations work with nested documents.
+- Create, read, update, delete, and bounded equality-filter operations work with nested documents; pagination and TTL are future capabilities, not current MVP promises.
 - Conditional updates return a clear version-conflict error and do not overwrite newer data.
-- Query limits prevent accidental unbounded reads and destructive filters.
-- Snapshots are encrypted when configured, checksummed, and restorable to a sandbox.
-- Health diagnostics identify schema drift, storage growth, backup staleness, and query-budget violations.
+- Query and storage limits prevent accidental unbounded reads and uncontrolled WAL growth.
+- Snapshots are checksummed and restorable to a sandbox; authenticated encryption remains a production gate and is not yet implemented.
+- Health diagnostics identify current schema, document, payload, and WAL growth; backup staleness and query-budget telemetry require future operational instrumentation.
 - Steward findings contain evidence, severity, confidence, and a recommendation; no finding is an executable command.
-- Default instances bind locally, use conservative limits, and start in Observe mode.
-- CLI/API behavior is covered by automated tests and examples.
+- Default instances use conservative limits and start in local read-only Observe mode for Steward analysis.
+- CLI behavior is covered by automated tests and examples; an application API remains future work.
 
 ## Out of scope
 

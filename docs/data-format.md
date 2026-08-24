@@ -34,7 +34,7 @@ Before closing and replacing the active WAL, VDB measures the compacted temporar
 
 ## Compatibility boundary
 
-JSON remains the easiest external interchange format. The CLI’s JSON Lines export/import is the human-readable migration and recovery escape hatch. A future HTTP API and SDKs may accept JSON and translate it into the internal typed representation. CBOR exports may be offered for compact migration.
+JSON remains the easiest external interchange format. The CLI’s JSON Lines export/import is the human-readable migration and recovery escape hatch. Imports are bounded to 2 MiB per record and 64 MiB per batch, prevalidated before mutation, and appended as one synchronized WAL batch so malformed input or a quota failure does not leave a partial import. A future HTTP API and SDKs may accept JSON and translate it into the internal typed representation. CBOR exports may be offered for compact migration.
 
 Trusted control messages, policies, telemetry events, and future replication messages should use an explicit schema rather than arbitrary model-generated JSON. Protocol Buffers or a similarly versioned typed format are candidates for that control plane.
 

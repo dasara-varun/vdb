@@ -13,6 +13,7 @@ use thiserror::Error;
 
 const MAX_WAL_RECORD_BYTES: usize = 64 * 1024 * 1024;
 const MAX_IMPORT_LINE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_IMPORT_BYTES: usize = 64 * 1024 * 1024;
 pub const DEFAULT_MAX_WAL_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_CONFIGURED_WAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const DEFAULT_MAX_DOCUMENT_BYTES: usize = 1_048_576;
@@ -64,6 +65,8 @@ pub enum VdbError {
     },
     #[error("serialization error: {0}")]
     Serialization(String),
+    #[error("JSON Lines import exceeds the {max_bytes} byte batch limit")]
+    ImportTooLarge { max_bytes: usize },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -617,7 +620,7 @@ impl VdbStore {
             fs::create_dir_all(parent)?;
         }
         let mut export_options = OpenOptions::new();
-        export_options.create(true).truncate(true).write(true);
+        export_options.create_new(true).write(true);
         secure_create_options(&mut export_options);
         let file = export_options.open(destination)?;
         let mut writer = BufWriter::new(file);
@@ -653,37 +656,83 @@ impl VdbStore {
     }
 
     pub fn import_jsonl(&self, source: impl AsRef<Path>) -> Result<usize, VdbError> {
-        let file = File::open(source)?;
-        let mut reader = BufReader::new(file);
-        let mut count = 0usize;
-        let mut line_number = 0usize;
-        while let Some(mut line) = read_bounded_line(&mut reader, MAX_IMPORT_LINE_BYTES)? {
-            line_number += 1;
-            if line.last() == Some(&b'\n') {
-                line.pop();
-            }
-            if line.last() == Some(&b'\r') {
-                line.pop();
-            }
-            if line.iter().all(|byte| byte.is_ascii_whitespace()) {
-                continue;
-            }
-            let line = String::from_utf8(line).map_err(|error| {
-                VdbError::Serialization(format!(
-                    "invalid UTF-8 in JSON Lines record {line_number}: {error}"
-                ))
-            })?;
-            let record: ExportRecord = serde_json::from_str(&line).map_err(|error| {
-                VdbError::Serialization(format!(
-                    "invalid JSON Lines record {}: {error}",
-                    line_number
-                ))
-            })?;
-            self.create_collection(&record.collection)?;
-            self.put(&record.collection, record.id, record.data, None)?;
-            count += 1;
+        let records = read_export_records(source)?;
+        if records.is_empty() {
+            return Ok(0);
         }
-        Ok(count)
+
+        let _gate = self.write_gate.lock();
+        let mut staged_state = self.state.read().clone();
+        let mut wal_records = Vec::with_capacity(records.len() * 2);
+        for record in &records {
+            validate_collection(&record.collection)?;
+            validate_document_id(&record.id)?;
+            validate_document(&record.data, self.max_document_bytes)?;
+            if !staged_state.collections.contains_key(&record.collection) {
+                staged_state
+                    .collections
+                    .insert(record.collection.clone(), HashMap::new());
+                wal_records.push(WalRecord::CreateCollection {
+                    name: record.collection.clone(),
+                });
+            }
+            let current = staged_state
+                .collections
+                .get(&record.collection)
+                .and_then(|documents| documents.get(&record.id))
+                .cloned();
+            let now = Utc::now();
+            let document = Document {
+                id: record.id.clone(),
+                version: current.as_ref().map_or(1, |previous| previous.version + 1),
+                created_at: current.as_ref().map_or(now, |previous| previous.created_at),
+                updated_at: now,
+                data: record.data.clone(),
+            };
+            wal_records.push(WalRecord::Put {
+                collection: record.collection.clone(),
+                document: document.clone(),
+            });
+            let documents = staged_state
+                .collections
+                .get_mut(&record.collection)
+                .ok_or_else(|| VdbError::CollectionNotFound(record.collection.clone()))?;
+            documents.insert(document.id.clone(), document.clone());
+            refresh_document_indexes(
+                &mut staged_state,
+                &record.collection,
+                current.as_ref(),
+                &document,
+            );
+        }
+
+        let mut encoded_batch = Vec::new();
+        for record in &wal_records {
+            write_wal_record(&mut encoded_batch, record)?;
+        }
+        let mut wal = self.wal.lock();
+        let wal = wal.as_mut().ok_or(VdbError::StorageUnavailable)?;
+        let current_bytes = wal.metadata()?.len();
+        let requested_bytes = encoded_batch.len() as u64;
+        if current_bytes.saturating_add(requested_bytes) > self.max_wal_bytes {
+            return Err(VdbError::StorageQuotaExceeded {
+                current: current_bytes,
+                requested: requested_bytes,
+                limit: self.max_wal_bytes,
+            });
+        }
+        if let Err(error) = wal.write_all(&encoded_batch).and_then(|_| wal.sync_data()) {
+            let rollback_result = wal.set_len(current_bytes).and_then(|_| wal.sync_data());
+            if let Err(rollback_error) = rollback_result {
+                return Err(VdbError::Io(std::io::Error::new(
+                    rollback_error.kind(),
+                    format!("import failed ({error}); WAL rollback failed: {rollback_error}"),
+                )));
+            }
+            return Err(error.into());
+        }
+        *self.state.write() = staged_state;
+        Ok(records.len())
     }
 
     pub fn backup(&self, destination: impl AsRef<Path>) -> Result<BackupManifest, VdbError> {
@@ -726,6 +775,7 @@ impl VdbStore {
 
     pub fn verify_backup(destination: impl AsRef<Path>) -> Result<Health, VdbError> {
         let destination = destination.as_ref();
+        reject_symlink(destination)?;
         let bytes = fs::read(destination)?;
         if bytes.len() < FILE_HEADER_LEN {
             return Err(VdbError::Serialization(
@@ -733,15 +783,14 @@ impl VdbStore {
             ));
         }
         let manifest_path = PathBuf::from(format!("{}.manifest.json", destination.display()));
-        if manifest_path.exists() {
-            let manifest: BackupManifest = serde_json::from_slice(&fs::read(manifest_path)?)
-                .map_err(|error| VdbError::Serialization(error.to_string()))?;
-            let digest = Sha256::digest(&bytes);
-            if manifest.sha256 != format!("{digest:x}") || manifest.bytes != bytes.len() as u64 {
-                return Err(VdbError::Serialization(
-                    "backup checksum or size does not match manifest".to_string(),
-                ));
-            }
+        reject_symlink(&manifest_path)?;
+        let manifest: BackupManifest = serde_json::from_slice(&fs::read(&manifest_path)?)
+            .map_err(|error| VdbError::Serialization(error.to_string()))?;
+        let digest = Sha256::digest(&bytes);
+        if manifest.sha256 != format!("{digest:x}") || manifest.bytes != bytes.len() as u64 {
+            return Err(VdbError::Serialization(
+                "backup checksum or size does not match manifest".to_string(),
+            ));
         }
         let restored = VdbStore::open(destination)?;
         Ok(restored.health())
@@ -851,14 +900,19 @@ fn validate_field(field: &str) -> Result<(), VdbError> {
 }
 
 fn index_key(data: &Value, field: &str) -> Option<String> {
-    let mut value = data;
-    for segment in field.split('.') {
-        value = value.get(segment)?;
-    }
+    let value = value_at_path(data, field)?;
     if value.is_object() || value.is_array() {
         return None;
     }
     serde_json::to_string(value).ok()
+}
+
+fn value_at_path<'a>(data: &'a Value, field: &str) -> Option<&'a Value> {
+    let mut value = data;
+    for segment in field.split('.') {
+        value = value.get(segment)?;
+    }
+    Some(value)
 }
 
 fn remove_document_from_indexes(state: &mut State, collection: &str, document: &Document) {
@@ -939,6 +993,46 @@ fn read_bounded_line(
         )));
     }
     Ok(Some(line))
+}
+
+fn read_export_records(source: impl AsRef<Path>) -> Result<Vec<ExportRecord>, VdbError> {
+    let file = File::open(source)?;
+    let mut reader = BufReader::new(file);
+    let mut records = Vec::new();
+    let mut total_bytes = 0usize;
+    let mut line_number = 0usize;
+    while let Some(mut line) = read_bounded_line(&mut reader, MAX_IMPORT_LINE_BYTES)? {
+        line_number += 1;
+        total_bytes = total_bytes
+            .checked_add(line.len())
+            .ok_or(VdbError::ImportTooLarge {
+                max_bytes: MAX_IMPORT_BYTES,
+            })?;
+        if total_bytes > MAX_IMPORT_BYTES {
+            return Err(VdbError::ImportTooLarge {
+                max_bytes: MAX_IMPORT_BYTES,
+            });
+        }
+        if line.last() == Some(&b'\n') {
+            line.pop();
+        }
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        if line.iter().all(|byte| byte.is_ascii_whitespace()) {
+            continue;
+        }
+        let line = String::from_utf8(line).map_err(|error| {
+            VdbError::Serialization(format!(
+                "invalid UTF-8 in JSON Lines record {line_number}: {error}"
+            ))
+        })?;
+        let record: ExportRecord = serde_json::from_str(&line).map_err(|error| {
+            VdbError::Serialization(format!("invalid JSON Lines record {line_number}: {error}"))
+        })?;
+        records.push(record);
+    }
+    Ok(records)
 }
 
 fn reject_new_output(path: &Path) -> Result<(), VdbError> {
@@ -1076,12 +1170,12 @@ fn validate_document(data: &Value, max_bytes: usize) -> Result<(), VdbError> {
 
 fn matches_filter(data: &Value, filter: Option<&Map<String, Value>>) -> bool {
     let Some(filter) = filter else { return true };
-    let Value::Object(document) = data else {
+    let Value::Object(_) = data else {
         return false;
     };
     filter
         .iter()
-        .all(|(key, expected)| document.get(key) == Some(expected))
+        .all(|(key, expected)| value_at_path(data, key) == Some(expected))
 }
 
 fn json_type(value: &Value) -> &'static str {
@@ -1357,6 +1451,60 @@ mod tests {
     }
 
     #[test]
+    fn backup_verification_requires_an_intact_manifest() {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("data.vdb");
+        let destination = directory.path().join("backup.vdb");
+        let manifest = PathBuf::from(format!("{}.manifest.json", destination.display()));
+        let store = VdbStore::open(source).unwrap();
+        store.create_collection("notes").unwrap();
+        store
+            .put("notes", "n1", serde_json::json!({"text": "hello"}), None)
+            .unwrap();
+        store.backup(&destination).unwrap();
+        drop(store);
+
+        let manifest_bytes = std::fs::read(&manifest).unwrap();
+        std::fs::remove_file(&manifest).unwrap();
+        assert!(VdbStore::verify_backup(&destination).is_err());
+
+        std::fs::write(&manifest, manifest_bytes).unwrap();
+        std::fs::write(&manifest, b"{}").unwrap();
+        assert!(VdbStore::verify_backup(&destination).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_verification_rejects_symlinked_backup_and_manifest() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("data.vdb");
+        let destination = directory.path().join("backup.vdb");
+        let destination_link = directory.path().join("backup-link.vdb");
+        let manifest = PathBuf::from(format!("{}.manifest.json", destination.display()));
+        let manifest_target = directory.path().join("manifest-copy.json");
+        let store = VdbStore::open(source).unwrap();
+        store.create_collection("notes").unwrap();
+        store.backup(&destination).unwrap();
+        drop(store);
+
+        symlink(&destination, &destination_link).unwrap();
+        assert!(matches!(
+            VdbStore::verify_backup(&destination_link),
+            Err(VdbError::InvalidPath(_))
+        ));
+
+        std::fs::copy(&manifest, &manifest_target).unwrap();
+        std::fs::remove_file(&manifest).unwrap();
+        symlink(&manifest_target, &manifest).unwrap();
+        assert!(matches!(
+            VdbStore::verify_backup(&destination),
+            Err(VdbError::InvalidPath(_))
+        ));
+    }
+
+    #[test]
     fn process_lock_prevents_concurrent_instances() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("data.vdb");
@@ -1523,6 +1671,58 @@ mod tests {
         assert_eq!(store.import_jsonl(&source).unwrap(), 2);
         assert_eq!(store.get("users", "u1").unwrap().data["name"], "Asha");
         assert_eq!(store.get("users", "u2").unwrap().data["name"], "Lin");
+    }
+
+    #[test]
+    fn jsonl_import_is_atomic_on_invalid_record() {
+        let directory = tempdir().unwrap();
+        let database = directory.path().join("data.vdb");
+        let source = directory.path().join("records.jsonl");
+        let store = VdbStore::open(database).unwrap();
+        std::fs::write(
+            &source,
+            b"{\"collection\":\"users\",\"id\":\"u1\",\"data\":{\"name\":\"Asha\"}}\nnot-json\n",
+        )
+        .unwrap();
+
+        assert!(store.import_jsonl(&source).is_err());
+        assert!(store.list_collections().is_empty());
+        assert_eq!(store.health().wal_bytes, FILE_HEADER_LEN as u64);
+    }
+
+    #[test]
+    fn jsonl_import_is_atomic_on_quota_failure() {
+        let directory = tempdir().unwrap();
+        let database = directory.path().join("data.vdb");
+        let source = directory.path().join("records.jsonl");
+        {
+            let store = VdbStore::open(&database).unwrap();
+            store.create_collection("users").unwrap();
+        }
+        let current_bytes = std::fs::metadata(&database).unwrap().len();
+        let constrained = VdbStore::open_with_options(
+            &database,
+            VdbOptions {
+                max_wal_bytes: current_bytes + 1,
+                ..VdbOptions::default()
+            },
+        )
+        .unwrap();
+        std::fs::write(
+            &source,
+            b"{\"collection\":\"users\",\"id\":\"u1\",\"data\":{\"name\":\"Asha\"}}\n",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            constrained.import_jsonl(&source),
+            Err(VdbError::StorageQuotaExceeded { .. })
+        ));
+        assert!(matches!(
+            constrained.get("users", "u1"),
+            Err(VdbError::DocumentNotFound { .. })
+        ));
+        assert_eq!(constrained.health().wal_bytes, current_bytes);
     }
 
     #[test]
@@ -1735,6 +1935,44 @@ mod tests {
             "u2"
         );
         assert_eq!(store.list_indexes("users").unwrap()[0].indexed_documents, 2);
+    }
+
+    #[test]
+    fn nested_equality_query_matches_with_and_without_index() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.vdb");
+        let store = VdbStore::open(path).unwrap();
+        store.create_collection("users").unwrap();
+        store
+            .put(
+                "users",
+                "u1",
+                serde_json::json!({"profile": {"plan": "pro"}}),
+                None,
+            )
+            .unwrap();
+        store
+            .put(
+                "users",
+                "u2",
+                serde_json::json!({"profile": {"plan": "free"}}),
+                None,
+            )
+            .unwrap();
+
+        let filter = serde_json::json!({"profile.plan": "pro"})
+            .as_object()
+            .cloned();
+        assert_eq!(
+            store.query("users", filter.as_ref(), 10).unwrap()[0].id,
+            "u1"
+        );
+
+        store.create_index("users", "profile.plan").unwrap();
+        assert_eq!(
+            store.query("users", filter.as_ref(), 10).unwrap()[0].id,
+            "u1"
+        );
     }
 
     #[test]

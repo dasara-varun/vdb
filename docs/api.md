@@ -24,16 +24,16 @@ System fields are reserved. User payloads may contain nested objects and arrays.
 | Create collection | Creates metadata and an empty collection; idempotent when requested | Implemented |
 | Put document | Inserts or replaces by `_id`; supports optional expected version | Implemented |
 | Get document | Returns one document or a typed not-found result | Implemented |
-| Query | Uses bounded top-level equality filters, returns up to the requested limit, and orders by most recent update; projections, cursors, and range predicates are not yet implemented | Implemented baseline |
+| Query | Uses bounded equality filters on top-level or dotted nested fields, returns up to the requested limit, and orders by most recent update; projections, cursors, and range predicates are not yet implemented | Implemented baseline |
 | Patch document | Planned convenience operation; callers currently send a complete replacement with an expected version | Planned |
 | Delete document | Deletes one explicit document ID with an optional expected version; bulk deletes are not implemented | Implemented baseline |
 | Create index | Creates a validated single-field equality index | Implemented |
 | List indexes | Reports indexed fields and document/value coverage | Implemented |
 | Health | Returns current collection, document, payload, WAL-size, configured document-limit, and configured WAL-quota summaries | Implemented baseline |
 | Backup | Creates a private checksummed snapshot and manifest; refuses existing output paths | Implemented baseline |
-| Backup verify | Reopens a snapshot and validates its manifest and health | Implemented baseline |
+| Backup verify | Requires the manifest, validates its checksum and size, rejects symlink paths, then reopens the snapshot and reports health | Implemented baseline |
 | Export | Writes portable JSON Lines records to a new output path | Implemented |
-| Import | Bounds and validates JSON Lines records, then writes them through normal document rules | Implemented baseline |
+| Import | Bounds and validates the complete JSON Lines batch before a single synchronized WAL append; invalid input or quota failure leaves logical state unchanged | Implemented baseline |
 
 ## Conditional updates
 
@@ -64,7 +64,7 @@ A conflict returns:
 
 ## Query limits
 
-The current core accepts a result limit from 1 through 1000 and bounds documents to 1 MiB by default. It supports simple top-level equality filters and still materializes the working set in memory. The WAL has a write-time quota of 512 MiB by default, configurable through the Rust `VdbOptions` API or the CLI’s global `--max-wal-bytes` flag up to 16 GiB. A write that would exceed the quota is rejected before append with `StorageQuotaExceeded`; compaction may still run to reduce the WAL. Timeout budgets, scan budgets, projections, and cursor pagination are future API requirements rather than current MVP behavior. Future destructive operations must reject unbounded filters and return a clear remediation message.
+The current core accepts a result limit from 1 through 1000 and bounds documents to 1 MiB by default. It supports simple equality filters on top-level or dotted nested fields and still materializes the working set in memory. JSON Lines imports are bounded per line and to a 64 MiB batch, and are prevalidated before mutation. The WAL has a write-time quota of 512 MiB by default, configurable through the Rust `VdbOptions` API or the CLI’s global `--max-wal-bytes` flag up to 16 GiB. A write that would exceed the quota is rejected before append with `StorageQuotaExceeded`; compaction may still run to reduce the WAL. Timeout budgets, scan budgets, projections, and cursor pagination are future API requirements rather than current MVP behavior. Future destructive operations must reject unbounded filters and return a clear remediation message.
 
 ## Health response
 
@@ -99,13 +99,13 @@ Any future action plan must use a typed allowlist. No API accepts arbitrary SQL,
 
 ## Error codes
 
-The current Rust error surface includes invalid collection/document/path, collection or document not found, version conflict, invalid query limit, instance locked, unsupported format, unavailable storage handle, WAL quota exceeded, serialization, and I/O failures. A future HTTP API should map these to stable machine-readable codes such as `INVALID_DOCUMENT`, `DOCUMENT_NOT_FOUND`, `VERSION_CONFLICT`, `QUERY_LIMIT_EXCEEDED`, `COLLECTION_NOT_FOUND`, `BACKUP_FAILED`, `UNAUTHORIZED`, `FORBIDDEN`, and `STORAGE_RECOVERY_REQUIRED` only after the corresponding behavior exists and is tested.
+The current Rust error surface includes invalid collection/document/path, collection or document not found, version conflict, invalid query limit, instance locked, unsupported format, unavailable storage handle, WAL quota exceeded, import batch too large, serialization, and I/O failures. A future HTTP API should map these to stable machine-readable codes such as `INVALID_DOCUMENT`, `DOCUMENT_NOT_FOUND`, `VERSION_CONFLICT`, `QUERY_LIMIT_EXCEEDED`, `COLLECTION_NOT_FOUND`, `BACKUP_FAILED`, `UNAUTHORIZED`, `FORBIDDEN`, and `STORAGE_RECOVERY_REQUIRED` only after the corresponding behavior exists and is tested.
 
 ## CLI examples
 
 ```bash
 vdb --path ./app.vdb index-create users plan
-vdb --path ./app.vdb index-list users plan
+vdb --path ./app.vdb index-list users
 vdb --path ./app.vdb export ./users.jsonl
 vdb --path ./app.vdb import ./users.jsonl
 vdb --path ./app.vdb backup-verify ./backups/app.vdb

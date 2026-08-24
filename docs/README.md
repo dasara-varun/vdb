@@ -14,7 +14,7 @@ This directory is the project’s durable knowledge base. It explains what VDB i
 | Understand storage compatibility | [`data-format.md`](data-format.md), [`durability-matrix.md`](durability-matrix.md) | [`operations.md`](operations.md), [`testing.md`](testing.md) |
 | Understand the Steward | [`steward.md`](steward.md) | [`security.md`](security.md), [`product.md`](product.md) |
 | Evaluate performance | [`performance.md`](performance.md) | [`benchmarks.md`](benchmarks.md), [`improvement-plan.md`](improvement-plan.md) |
-| Assess demand and product direction | [`demand-validation.md`](demand-validation.md) | [`product.md`](product.md), [`roadmap.md`](roadmap.md) |
+| Assess demand and product direction | [`demand-validation.md`](demand-validation.md), [`developer-research.md`](developer-research.md) | [`product.md`](product.md), [`roadmap.md`](roadmap.md) |
 | Record a new architectural decision | [`decisions/README.md`](decisions/README.md) | [`templates/decision-record.md`](templates/decision-record.md) |
 | Update project knowledge | [`documentation-maintenance.md`](documentation-maintenance.md) | [`project-status.md`](project-status.md), [`templates/progress-update.md`](templates/progress-update.md) |
 | Use Claude Code tooling safely | [`agent-tooling.md`](agent-tooling.md) | [`loop-engineering.md`](loop-engineering.md), `AGENTS.md` |
@@ -46,6 +46,7 @@ This directory is the project’s durable knowledge base. It explains what VDB i
 | [`benchmarks.md`](benchmarks.md) | Measured baseline and benchmark limitations |
 | [`data-format.md`](data-format.md) | `VDB1` header, CBOR WAL, checksums, replay, and compatibility |
 | [`demand-validation.md`](demand-validation.md) | Demand signals, interview plan, and pilot thresholds |
+| [`developer-research.md`](developer-research.md) | Developer adoption lessons, competing database comparisons, and product roadmap |
 | [`durability-matrix.md`](durability-matrix.md) | Tested recovery behavior, filesystem assumptions, and release durability gaps |
 | [`diagram-review.md`](diagram-review.md) | Review notes for the rendered diagrams |
 | [`documentation-maintenance.md`](documentation-maintenance.md) | Required maintenance process for this knowledge base |
