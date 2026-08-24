@@ -14,6 +14,7 @@ required_files=(
   "docs/documentation-maintenance.md"
   "docs/developer-research.md"
   "docs/gui-research.md"
+  "docs/crypto-research.md"
   "docs/durability-matrix.md"
   ".github/dependabot.yml"
   "docs/project-status.md"

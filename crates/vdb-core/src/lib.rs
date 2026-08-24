@@ -18,6 +18,8 @@ pub const DEFAULT_MAX_WAL_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_CONFIGURED_WAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const DEFAULT_MAX_DOCUMENT_BYTES: usize = 1_048_576;
 const MAX_CONFIGURED_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
+pub const DEFAULT_MAX_DOCUMENTS: usize = 100_000;
+pub const MAX_CONFIGURED_DOCUMENTS: usize = 10_000_000;
 const FILE_MAGIC: &[u8; 4] = b"VDB1";
 const MIN_SUPPORTED_FORMAT_VERSION: u16 = 1;
 const FORMAT_VERSION: u16 = 2;
@@ -57,6 +59,14 @@ pub enum VdbError {
     UnsupportedFormat,
     #[error("storage handle is unavailable")]
     StorageUnavailable,
+    #[error(
+        "document count quota exceeded: current {current} + requested {requested} > limit {limit}"
+    )]
+    DocumentQuotaExceeded {
+        current: usize,
+        requested: usize,
+        limit: usize,
+    },
     #[error("WAL storage quota exceeded: current {current} bytes + requested {requested} bytes > limit {limit} bytes")]
     StorageQuotaExceeded {
         current: u64,
@@ -116,6 +126,7 @@ pub struct Health {
     pub payload_bytes: usize,
     pub wal_bytes: u64,
     pub max_document_bytes: usize,
+    pub max_documents: usize,
     pub max_wal_bytes: u64,
 }
 
@@ -138,6 +149,7 @@ pub struct BackupManifest {
 #[derive(Debug, Clone)]
 pub struct VdbOptions {
     pub max_document_bytes: usize,
+    pub max_documents: usize,
     pub max_wal_bytes: u64,
 }
 
@@ -145,6 +157,7 @@ impl Default for VdbOptions {
     fn default() -> Self {
         Self {
             max_document_bytes: DEFAULT_MAX_DOCUMENT_BYTES,
+            max_documents: DEFAULT_MAX_DOCUMENTS,
             max_wal_bytes: DEFAULT_MAX_WAL_BYTES,
         }
     }
@@ -163,6 +176,7 @@ struct State {
     collections: HashMap<String, HashMap<String, Document>>,
     index_fields: HashMap<String, BTreeSet<String>>,
     indexes: HashMap<String, HashMap<String, HashMap<String, BTreeSet<String>>>>,
+    document_count: usize,
 }
 
 pub struct VdbStore {
@@ -173,6 +187,7 @@ pub struct VdbStore {
     state: RwLock<State>,
     write_gate: Mutex<()>,
     max_document_bytes: usize,
+    max_documents: usize,
     max_wal_bytes: u64,
 }
 
@@ -209,6 +224,7 @@ impl VdbStore {
             )));
         }
         let max_document_bytes = options.max_document_bytes;
+        let max_documents = options.max_documents;
         let path = path.as_ref().to_path_buf();
         reject_symlink(&path)?;
         if let Some(parent) = path.parent() {
@@ -222,7 +238,7 @@ impl VdbStore {
             return Err(error);
         }
         // Replay uses the format-wide cap so a lower write-time limit cannot make existing data unreadable.
-        let state = match replay_wal(&path, MAX_CONFIGURED_DOCUMENT_BYTES) {
+        let state = match replay_wal(&path, MAX_CONFIGURED_DOCUMENT_BYTES, max_documents) {
             Ok(state) => state,
             Err(error) => {
                 drop(lock_file);
@@ -249,6 +265,7 @@ impl VdbStore {
             state: RwLock::new(state),
             write_gate: Mutex::new(()),
             max_document_bytes,
+            max_documents,
             max_wal_bytes: options.max_wal_bytes,
         })
     }
@@ -295,6 +312,13 @@ impl VdbStore {
             .and_then(|docs| docs.get(&document_id))
             .cloned();
         let current_version = current.as_ref().map_or(0, |doc| doc.version);
+        if current.is_none() && self.state.read().document_count >= self.max_documents {
+            return Err(VdbError::DocumentQuotaExceeded {
+                current: self.state.read().document_count,
+                requested: 1,
+                limit: self.max_documents,
+            });
+        }
         if expected_version.is_some() && expected_version != Some(current_version) {
             return Err(VdbError::VersionConflict {
                 collection: collection.to_string(),
@@ -316,6 +340,9 @@ impl VdbStore {
             document: document.clone(),
         })?;
         let mut state = self.state.write();
+        if current.is_none() {
+            state.document_count += 1;
+        }
         state
             .collections
             .get_mut(collection)
@@ -463,13 +490,13 @@ impl VdbStore {
             collection: collection.to_string(),
             document_id: document_id.to_string(),
         })?;
-        self.state
-            .write()
+        let mut state = self.state.write();
+        state
             .collections
             .get_mut(collection)
             .ok_or_else(|| VdbError::CollectionNotFound(collection.to_string()))?
             .remove(document_id);
-        let mut state = self.state.write();
+        state.document_count = state.document_count.saturating_sub(1);
         remove_document_from_indexes(&mut state, collection, &current);
         Ok(())
     }
@@ -499,7 +526,6 @@ impl VdbStore {
 
     pub fn health(&self) -> Health {
         let state = self.state.read();
-        let documents = state.collections.values().map(HashMap::len).sum::<usize>();
         let payload_bytes = state
             .collections
             .values()
@@ -510,10 +536,11 @@ impl VdbStore {
         Health {
             status: "healthy",
             collections: state.collections.len(),
-            documents,
+            documents: state.document_count,
             payload_bytes,
             wal_bytes: fs::metadata(&self.path).map_or(0, |metadata| metadata.len()),
             max_document_bytes: self.max_document_bytes,
+            max_documents: self.max_documents,
             max_wal_bytes: self.max_wal_bytes,
         }
     }
@@ -680,6 +707,13 @@ impl VdbStore {
                 .get(&record.collection)
                 .and_then(|documents| documents.get(&record.id))
                 .cloned();
+            if current.is_none() && staged_state.document_count >= self.max_documents {
+                return Err(VdbError::DocumentQuotaExceeded {
+                    current: staged_state.document_count,
+                    requested: 1,
+                    limit: self.max_documents,
+                });
+            }
             let now = Utc::now();
             let document = Document {
                 id: record.id.clone(),
@@ -696,6 +730,9 @@ impl VdbStore {
                 .collections
                 .get_mut(&record.collection)
                 .ok_or_else(|| VdbError::CollectionNotFound(record.collection.clone()))?;
+            if current.is_none() {
+                staged_state.document_count += 1;
+            }
             documents.insert(document.id.clone(), document.clone());
             refresh_document_indexes(
                 &mut staged_state,
@@ -1294,7 +1331,11 @@ fn json_type(value: &Value) -> &'static str {
     }
 }
 
-fn replay_wal(path: &Path, max_document_bytes: usize) -> Result<State, VdbError> {
+fn replay_wal(
+    path: &Path,
+    max_document_bytes: usize,
+    max_documents: usize,
+) -> Result<State, VdbError> {
     let file_length = fs::metadata(path)?.len();
     let mut reader = BufReader::new(File::open(path)?);
     let mut header = [0u8; FILE_HEADER_LEN];
@@ -1309,6 +1350,7 @@ fn replay_wal(path: &Path, max_document_bytes: usize) -> Result<State, VdbError>
         collections: HashMap::new(),
         index_fields: HashMap::new(),
         indexes: HashMap::new(),
+        document_count: 0,
     };
     let mut valid_end = FILE_HEADER_LEN as u64;
     loop {
@@ -1345,7 +1387,7 @@ fn replay_wal(path: &Path, max_document_bytes: usize) -> Result<State, VdbError>
         let record: WalRecord = serde_cbor::from_slice(&payload)
             .map_err(|error| VdbError::Serialization(error.to_string()))?;
         validate_wal_record(&record, max_document_bytes)?;
-        apply_record(&mut state, record, format_version)?;
+        apply_record(&mut state, record, format_version, max_documents)?;
         valid_end += (4 + length + 32) as u64;
     }
     if valid_end < file_length {
@@ -1357,7 +1399,12 @@ fn replay_wal(path: &Path, max_document_bytes: usize) -> Result<State, VdbError>
     Ok(state)
 }
 
-fn apply_record(state: &mut State, record: WalRecord, format_version: u16) -> Result<(), VdbError> {
+fn apply_record(
+    state: &mut State,
+    record: WalRecord,
+    format_version: u16,
+    max_documents: usize,
+) -> Result<(), VdbError> {
     match record {
         WalRecord::CreateCollection { name } => {
             state.collections.entry(name).or_default();
@@ -1384,6 +1431,16 @@ fn apply_record(state: &mut State, record: WalRecord, format_version: u16) -> Re
                     document.id
                 )));
             }
+            if !documents.contains_key(&document.id) {
+                if state.document_count >= max_documents {
+                    return Err(VdbError::DocumentQuotaExceeded {
+                        current: state.document_count,
+                        requested: 1,
+                        limit: max_documents,
+                    });
+                }
+                state.document_count += 1;
+            }
             documents.insert(document.id.clone(), document);
         }
         WalRecord::SnapshotPut {
@@ -1404,6 +1461,14 @@ fn apply_record(state: &mut State, record: WalRecord, format_version: u16) -> Re
                     document.id
                 )));
             }
+            if state.document_count >= max_documents {
+                return Err(VdbError::DocumentQuotaExceeded {
+                    current: state.document_count,
+                    requested: 1,
+                    limit: max_documents,
+                });
+            }
+            state.document_count += 1;
             documents.insert(document.id.clone(), document);
         }
         WalRecord::Delete {
@@ -1420,6 +1485,7 @@ fn apply_record(state: &mut State, record: WalRecord, format_version: u16) -> Re
                     "WAL delete references missing document: {collection}/{document_id}"
                 )));
             }
+            state.document_count = state.document_count.saturating_sub(1);
         }
         WalRecord::CreateIndex { collection, field } => {
             if !state.collections.contains_key(&collection) {
@@ -1698,6 +1764,58 @@ mod tests {
     }
 
     #[test]
+    fn document_count_quota_is_enforced_for_writes_and_replay() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("data.vdb");
+        let options = VdbOptions {
+            max_documents: 1,
+            ..VdbOptions::default()
+        };
+        {
+            let store = VdbStore::open_with_options(path.clone(), options.clone()).unwrap();
+            store.create_collection("users").unwrap();
+            store
+                .put("users", "u1", serde_json::json!({"name": "Asha"}), None)
+                .unwrap();
+            let error = store
+                .put("users", "u2", serde_json::json!({"name": "Bala"}), None)
+                .unwrap_err();
+            assert!(matches!(error, VdbError::DocumentQuotaExceeded { .. }));
+            store
+                .put(
+                    "users",
+                    "u1",
+                    serde_json::json!({"name": "Asha", "active": true}),
+                    Some(1),
+                )
+                .unwrap();
+            store.delete("users", "u1", None).unwrap();
+            store
+                .put("users", "u2", serde_json::json!({"name": "Bala"}), None)
+                .unwrap();
+            assert_eq!(store.health().documents, 1);
+            assert_eq!(store.health().max_documents, 1);
+        }
+
+        let replay_path = directory.path().join("replay.vdb");
+        {
+            let store = VdbStore::open(&replay_path).unwrap();
+            store.create_collection("users").unwrap();
+            store
+                .put("users", "u1", serde_json::json!({"name": "Asha"}), None)
+                .unwrap();
+            store
+                .put("users", "u2", serde_json::json!({"name": "Bala"}), None)
+                .unwrap();
+        }
+        let error = match VdbStore::open_with_options(&replay_path, options) {
+            Ok(_) => panic!("document quota unexpectedly allowed replay"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, VdbError::DocumentQuotaExceeded { .. }));
+    }
+
+    #[test]
     fn wal_quota_rejects_write_without_partial_append() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("data.vdb");
@@ -1960,6 +2078,7 @@ mod tests {
             collections: HashMap::from([(String::from("users"), HashMap::new())]),
             index_fields: HashMap::new(),
             indexes: HashMap::new(),
+            document_count: 0,
         };
         let record = WalRecord::Put {
             collection: String::from("users"),
@@ -1971,7 +2090,7 @@ mod tests {
                 data: serde_json::json!({"name": "Asha"}),
             },
         };
-        let error = apply_record(&mut state, record, 1).unwrap_err();
+        let error = apply_record(&mut state, record, 1, MAX_CONFIGURED_DOCUMENTS).unwrap_err();
         assert!(error.to_string().contains("must be 1"));
 
         let snapshot = WalRecord::SnapshotPut {
@@ -1988,9 +2107,17 @@ mod tests {
             collections: HashMap::from([(String::from("users"), HashMap::new())]),
             index_fields: HashMap::new(),
             indexes: HashMap::new(),
+            document_count: 0,
         };
-        apply_record(&mut snapshot_state, snapshot.clone(), 2).unwrap();
-        let duplicate = apply_record(&mut snapshot_state, snapshot, 2).unwrap_err();
+        apply_record(
+            &mut snapshot_state,
+            snapshot.clone(),
+            2,
+            MAX_CONFIGURED_DOCUMENTS,
+        )
+        .unwrap();
+        let duplicate =
+            apply_record(&mut snapshot_state, snapshot, 2, MAX_CONFIGURED_DOCUMENTS).unwrap_err();
         assert!(duplicate.to_string().contains("duplicates document"));
     }
 

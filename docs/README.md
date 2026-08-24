@@ -48,6 +48,7 @@ This directory is the project’s durable knowledge base. It explains what VDB i
 | [`demand-validation.md`](demand-validation.md) | Demand signals, interview plan, and pilot thresholds |
 | [`developer-research.md`](developer-research.md) | Developer adoption lessons, competing database comparisons, and product roadmap |
 | [`gui-research.md`](gui-research.md) | Secure local GUI architecture, trust boundaries, and first-milestone design |
+| [`crypto-research.md`](crypto-research.md) | AEAD and key-management research constraints for future encrypted storage |
 | [`durability-matrix.md`](durability-matrix.md) | Tested recovery behavior, filesystem assumptions, and release durability gaps |
 | [`diagram-review.md`](diagram-review.md) | Review notes for the rendered diagrams |
 | [`documentation-maintenance.md`](documentation-maintenance.md) | Required maintenance process for this knowledge base |

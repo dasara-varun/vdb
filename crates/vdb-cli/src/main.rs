@@ -6,7 +6,23 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value};
 use std::path::PathBuf;
-use vdb_core::{VdbOptions, VdbStore, DEFAULT_MAX_WAL_BYTES, MAX_CONFIGURED_WAL_BYTES};
+use vdb_core::{
+    VdbOptions, VdbStore, DEFAULT_MAX_DOCUMENTS, DEFAULT_MAX_WAL_BYTES, MAX_CONFIGURED_DOCUMENTS,
+    MAX_CONFIGURED_WAL_BYTES,
+};
+
+fn parse_max_documents(value: &str) -> Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|error| format!("invalid document count: {error}"))?;
+    if (1..=MAX_CONFIGURED_DOCUMENTS).contains(&parsed) {
+        Ok(parsed)
+    } else {
+        Err(format!(
+            "maximum document count must be between 1 and {MAX_CONFIGURED_DOCUMENTS}"
+        ))
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "vdb", version, about = "Fast, local-first document database")]
@@ -21,6 +37,14 @@ struct Cli {
         help = "Maximum WAL size in bytes before new writes are rejected"
     )]
     max_wal_bytes: u64,
+    #[arg(
+        long,
+        default_value_t = DEFAULT_MAX_DOCUMENTS,
+        value_parser = parse_max_documents,
+        global = true,
+        help = "Maximum materialized document count before new documents are rejected"
+    )]
+    max_documents: usize,
     #[command(subcommand)]
     command: Command,
 }
@@ -110,6 +134,7 @@ fn print_json<T: serde::Serialize>(value: &T) -> Result<()> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let options = VdbOptions {
+        max_documents: cli.max_documents,
         max_wal_bytes: cli.max_wal_bytes,
         ..VdbOptions::default()
     };
@@ -246,6 +271,24 @@ mod tests {
         assert_eq!(cli.path, PathBuf::from("data.vdb"));
         assert_eq!(cli.max_wal_bytes, 1_048_576);
         assert!(matches!(cli.command, Command::Health));
+    }
+
+    #[test]
+    fn parses_custom_document_budget() {
+        let cli = Cli::try_parse_from(["vdb", "--max-documents", "2500", "health"]).unwrap();
+        assert_eq!(cli.max_documents, 2500);
+        assert!(matches!(cli.command, Command::Health));
+    }
+
+    #[test]
+    fn rejects_document_budget_above_supported_maximum() {
+        let result = Cli::try_parse_from([
+            "vdb",
+            "--max-documents",
+            &(MAX_CONFIGURED_DOCUMENTS + 1).to_string(),
+            "health",
+        ]);
+        assert!(result.is_err());
     }
 
     #[test]
