@@ -2,6 +2,7 @@
 name = "vdb"
 version.workspace = true
 edition.workspace = true
+publish = false
 license.workspace = true
 authors.workspace = true
 description = "VDB command-line interface"
