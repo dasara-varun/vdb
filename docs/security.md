@@ -58,7 +58,9 @@ Do not place credentials, encryption keys, tokens, or private source material in
 
 The MVP stores database files, WAL content, backups, and manifests as plaintext. Checksums provide integrity detection but do not provide confidentiality or authentication. OWASP recommends selecting cryptography from a threat model, minimizing sensitive data, using established primitives, and treating key management as a distinct design problem.[2]
 
-The production design should use a reviewed authenticated-encryption construction, key identifiers and rotation, secure provider boundaries, backup key handling, revocation and recovery procedures, and tests for wrong keys, tampering, rotation, and restore. VDB must not invent a custom cipher, password derivation scheme, or key-wrapping protocol.
+[`ADR-0003`](decisions/0003-encrypted-storage-and-key-provider.md) proposes the first concrete design: an opt-in VDB3 format using RustCrypto AES-256-GCM and an external raw-key file provider, with key identifiers, explicit migration, encrypted backups, and serialized rekeying. The ADR is still proposed; no encryption code or key-provider implementation exists yet.
+
+The production implementation must use a reviewed authenticated-encryption construction, key identifiers and rotation, secure provider boundaries, backup key handling, revocation and recovery procedures, and tests for wrong keys, tampering, rotation, and restore. VDB must not invent a custom cipher, password derivation scheme, or key-wrapping protocol.
 
 ## Audit events and recovery
 

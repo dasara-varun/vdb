@@ -24,7 +24,7 @@ The length is bounded before allocation or decoding. VDB replays the WAL as a bo
 
 On startup, VDB validates the `VDB1` header and replays complete valid records in order. Format versions 1 and 2 are currently readable; new files and compacted files use version 2. If the file ends with an incomplete trailing record, the MVP truncates only the incomplete tail and replays the valid prefix. A complete record with a checksum mismatch fails closed and reports that storage recovery is required. An oversized length prefix and semantically invalid records, including duplicate version-2 snapshot documents, also fail closed rather than being treated as a repairable tail. A truncated trailing record is discarded and the file is repaired to the last complete record; this behavior is covered by a deterministic regression. A newer or unknown format version is rejected rather than silently reinterpreted. Replay also validates collection names, identifiers, document limits, metadata, version sequencing, and record references before applying state.
 
-SHA-256 here is an integrity check against accidental corruption or incomplete writes. It does not provide confidentiality and does not authenticate an attacker who can rewrite both a payload and its checksum. Encryption at rest and authenticated encryption remain planned work.
+SHA-256 here is an integrity check against accidental corruption or incomplete writes. It does not provide confidentiality and does not authenticate an attacker who can rewrite both a payload and its checksum. Authenticated encryption remains an open P0 implementation gate; the proposed VDB3 format and external key-provider boundary are specified in [`ADR-0003`](decisions/0003-encrypted-storage-and-key-provider.md), but VDB1/VDB2 plaintext behavior remains the only implemented format contract until that ADR is accepted and implemented.
 
 ## Compaction boundary
 
@@ -44,7 +44,7 @@ The MVP accepts JSON-like objects containing nulls, booleans, numbers, strings, 
 
 ## Versioning and migration
 
-Every storage file carries a format version. Version 1 remains readable for compatibility; version 2 adds snapshot records used by compaction. The VDB CLI provides export/import commands as the current migration path. A newer binary must not silently reinterpret an older file. If migration is needed, VDB should create a new destination file, verify it, and preserve the original until the user confirms replacement.
+Every storage file carries a format version. Version 1 remains readable for compatibility; version 2 adds snapshot records used by compaction. A proposed version 3 encrypted format is documented in [`ADR-0003`](decisions/0003-encrypted-storage-and-key-provider.md) but is not yet implemented. The VDB CLI provides export/import commands as the current migration path. A newer binary must not silently reinterpret an older file. If migration is needed, VDB should create a new destination file, verify it, and preserve the original until the user confirms replacement.
 
 ## Security and privacy
 

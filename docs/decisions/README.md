@@ -8,6 +8,7 @@ Architectural Decision Records (ADRs) preserve decisions that future contributor
 |---|---|---|
 | [ADR-0001](0001-local-first-read-only-steward.md) | Local-first storage with a read-only Steward by default | Accepted |
 | [ADR-0002](0002-loopback-read-only-gui.md) | Opt-in loopback read-only GUI | Accepted |
+| [ADR-0003](0003-encrypted-storage-and-key-provider.md) | Explicit encrypted storage with an external file-key provider | Proposed |
 
 ## When to create an ADR
 

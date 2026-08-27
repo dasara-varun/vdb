@@ -49,6 +49,7 @@ This directory is the project’s durable knowledge base. It explains what VDB i
 | [`developer-research.md`](developer-research.md) | Developer adoption lessons, competing database comparisons, and product roadmap |
 | [`gui-research.md`](gui-research.md) | Secure local GUI architecture, trust boundaries, and first-milestone design |
 | [`crypto-research.md`](crypto-research.md) | AEAD and key-management research constraints for future encrypted storage |
+| [`decisions/0003-encrypted-storage-and-key-provider.md`](decisions/0003-encrypted-storage-and-key-provider.md) | Proposed encrypted VDB3 format and external file-key provider design |
 | [`durability-matrix.md`](durability-matrix.md) | Tested recovery behavior, filesystem assumptions, and release durability gaps |
 | [`diagram-review.md`](diagram-review.md) | Review notes for the rendered diagrams |
 | [`documentation-maintenance.md`](documentation-maintenance.md) | Required maintenance process for this knowledge base |
