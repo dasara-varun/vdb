@@ -9,6 +9,7 @@ description = "Core local-first document database primitives for VDB"
 
 [dependencies]
 anyhow.workspace = true
+aes-gcm.workspace = true
 ciborium.workspace = true
 chrono.workspace = true
 parking_lot.workspace = true

@@ -1,11 +1,16 @@
 #![forbid(unsafe_code)]
 
+mod crypto;
+
+pub use crypto::EncryptionKey;
+
 use chrono::{DateTime, Utc};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -25,7 +30,13 @@ pub const MAX_CONFIGURED_PAYLOAD_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const FILE_MAGIC: &[u8; 4] = b"VDB1";
 const MIN_SUPPORTED_FORMAT_VERSION: u16 = 1;
 const FORMAT_VERSION: u16 = 2;
+const ENCRYPTED_FORMAT_VERSION: u16 = 3;
 const FILE_HEADER_LEN: usize = 6;
+const ENCRYPTED_HEADER_LEN: usize = FILE_HEADER_LEN
+    + 1
+    + crypto::KEY_ID_BYTES
+    + crypto::NONCE_PREFIX_BYTES
+    + crypto::AUTH_TAG_BYTES;
 
 #[derive(Debug, Error)]
 pub enum VdbError {
@@ -83,6 +94,8 @@ pub enum VdbError {
     },
     #[error("serialization error: {0}")]
     Serialization(String),
+    #[error("encryption error: {0}")]
+    Encryption(String),
     #[error("JSON Lines import exceeds the {max_bytes} byte batch limit")]
     ImportTooLarge { max_bytes: usize },
 }
@@ -137,6 +150,8 @@ pub struct Health {
     pub max_documents: usize,
     pub max_payload_bytes: u64,
     pub max_wal_bytes: u64,
+    pub encrypted: bool,
+    pub key_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -153,6 +168,10 @@ pub struct BackupManifest {
     pub sha256: String,
     pub bytes: u64,
     pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub encrypted: bool,
+    #[serde(default)]
+    pub key_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -161,6 +180,7 @@ pub struct VdbOptions {
     pub max_documents: usize,
     pub max_payload_bytes: u64,
     pub max_wal_bytes: u64,
+    pub encryption_key: Option<EncryptionKey>,
 }
 
 impl Default for VdbOptions {
@@ -170,7 +190,24 @@ impl Default for VdbOptions {
             max_documents: DEFAULT_MAX_DOCUMENTS,
             max_payload_bytes: DEFAULT_MAX_PAYLOAD_BYTES,
             max_wal_bytes: DEFAULT_MAX_WAL_BYTES,
+            encryption_key: None,
         }
+    }
+}
+
+#[derive(Clone)]
+struct EncryptionContext {
+    key: EncryptionKey,
+    key_id: [u8; crypto::KEY_ID_BYTES],
+    nonce_prefix: [u8; crypto::NONCE_PREFIX_BYTES],
+}
+
+impl fmt::Debug for EncryptionContext {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EncryptionContext")
+            .field("key_id", &self.key_id)
+            .finish_non_exhaustive()
     }
 }
 
@@ -202,6 +239,9 @@ pub struct VdbStore {
     max_documents: usize,
     max_payload_bytes: u64,
     max_wal_bytes: u64,
+    format_version: u16,
+    encryption: Option<EncryptionContext>,
+    next_sequence: Mutex<u64>,
 }
 
 impl VdbStore {
@@ -226,6 +266,10 @@ impl VdbStore {
         path: impl AsRef<Path>,
         options: VdbOptions,
     ) -> Result<Self, VdbError> {
+        Self::open_internal(path, options)
+    }
+
+    fn open_internal(path: impl AsRef<Path>, options: VdbOptions) -> Result<Self, VdbError> {
         if !(1..=MAX_CONFIGURED_DOCUMENT_BYTES).contains(&options.max_document_bytes) {
             return Err(VdbError::InvalidDocument(format!(
                 "maximum document size must be between 1 and {MAX_CONFIGURED_DOCUMENT_BYTES} bytes"
@@ -251,19 +295,69 @@ impl VdbStore {
         }
         let lock_path = PathBuf::from(format!("{}.lock", path.display()));
         let lock_file = acquire_instance_lock(&lock_path)?;
-        if let Err(error) = ensure_header(&path).and_then(|_| restrict_file_permissions(&path)) {
-            drop(lock_file);
-            let _ = fs::remove_file(&lock_path);
-            return Err(error);
-        }
+        let initialization = (|| {
+            let requested_key = options.encryption_key;
+            let existing_version = if path.exists() && fs::metadata(&path)?.len() > 0 {
+                Some(read_format_version(&path)?)
+            } else {
+                None
+            };
+            let result = match existing_version {
+                Some(ENCRYPTED_FORMAT_VERSION) => {
+                    let key = requested_key.ok_or_else(|| {
+                        VdbError::Encryption(
+                            "an encryption key is required for this database".to_string(),
+                        )
+                    })?;
+                    (
+                        ENCRYPTED_FORMAT_VERSION,
+                        Some(read_encrypted_context(&path, key)?),
+                    )
+                }
+                Some(version)
+                    if (MIN_SUPPORTED_FORMAT_VERSION..=FORMAT_VERSION).contains(&version) =>
+                {
+                    if requested_key.is_some() {
+                        return Err(VdbError::Encryption(
+                            "an encryption key cannot be used with a plaintext database"
+                                .to_string(),
+                        ));
+                    }
+                    ensure_header(&path)?;
+                    (version, None)
+                }
+                Some(_) => return Err(VdbError::UnsupportedFormat),
+                None => match requested_key {
+                    Some(key) => (
+                        ENCRYPTED_FORMAT_VERSION,
+                        Some(create_encrypted_header(&path, key)?),
+                    ),
+                    None => {
+                        ensure_header(&path)?;
+                        (FORMAT_VERSION, None)
+                    }
+                },
+            };
+            restrict_file_permissions(&path)?;
+            Ok(result)
+        })();
+        let (format_version, encryption) = match initialization {
+            Ok(result) => result,
+            Err(error) => {
+                drop(lock_file);
+                let _ = fs::remove_file(&lock_path);
+                return Err(error);
+            }
+        };
         // Replay uses the format-wide cap so a lower write-time limit cannot make existing data unreadable.
-        let state = match replay_wal(
+        let (state, next_sequence) = match replay_wal(
             &path,
             MAX_CONFIGURED_DOCUMENT_BYTES,
             max_documents,
             max_payload_bytes,
+            encryption.as_ref(),
         ) {
-            Ok(state) => state,
+            Ok(result) => result,
             Err(error) => {
                 drop(lock_file);
                 let _ = fs::remove_file(&lock_path);
@@ -292,6 +386,9 @@ impl VdbStore {
             max_documents,
             max_payload_bytes,
             max_wal_bytes: options.max_wal_bytes,
+            format_version,
+            encryption,
+            next_sequence: Mutex::new(next_sequence),
         })
     }
 
@@ -593,6 +690,14 @@ impl VdbStore {
             max_documents: self.max_documents,
             max_payload_bytes: self.max_payload_bytes,
             max_wal_bytes: self.max_wal_bytes,
+            encrypted: self.encryption.is_some(),
+            key_id: self.encryption.as_ref().map(|context| {
+                context
+                    .key_id
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect()
+            }),
         }
     }
 
@@ -637,14 +742,40 @@ impl VdbStore {
             std::process::id()
         ));
         reject_new_output(&temporary_path)?;
+        let target_encryption = if let Some(context) = &self.encryption {
+            Some(EncryptionContext {
+                key: context.key.clone(),
+                key_id: crypto::random_key_id()
+                    .map_err(|error| VdbError::Encryption(error.to_string()))?,
+                nonce_prefix: crypto::random_nonce_prefix()
+                    .map_err(|error| VdbError::Encryption(error.to_string()))?,
+            })
+        } else {
+            None
+        };
         let mut temporary_options = OpenOptions::new();
         temporary_options.create_new(true).write(true);
         secure_create_options(&mut temporary_options);
         let mut temporary = temporary_options.open(&temporary_path)?;
-        temporary.write_all(FILE_MAGIC)?;
-        temporary.write_all(&FORMAT_VERSION.to_le_bytes())?;
+        if let Some(context) = &target_encryption {
+            temporary.write_all(&encrypted_header_bytes(context)?)?;
+        } else {
+            temporary.write_all(FILE_MAGIC)?;
+            temporary.write_all(&FORMAT_VERSION.to_le_bytes())?;
+        }
+        let mut sequence = 1u64;
         for record in records {
-            write_wal_record(&mut temporary, &record)?;
+            let encoded = if let Some(context) = &target_encryption {
+                encode_encrypted_wal_record(context, sequence, &record)?
+            } else {
+                encode_wal_record(&record)?
+            };
+            temporary.write_all(&encoded)?;
+            if target_encryption.is_some() {
+                sequence = sequence.checked_add(1).ok_or_else(|| {
+                    VdbError::Encryption("encrypted WAL sequence exhausted".to_string())
+                })?;
+            }
         }
         temporary.sync_all()?;
         let compacted_bytes = temporary.metadata()?.len();
@@ -686,6 +817,10 @@ impl VdbStore {
             .open(&self.path)?;
         let bytes = new_wal.metadata()?.len();
         *wal = Some(new_wal);
+        if target_encryption.is_some() {
+            self.encryption = target_encryption;
+            *self.next_sequence.lock() = sequence;
+        }
         Ok(bytes)
     }
 
@@ -817,8 +952,19 @@ impl VdbStore {
         }
 
         let mut encoded_batch = Vec::new();
+        let mut sequence = *self.next_sequence.lock();
         for record in &wal_records {
-            write_wal_record(&mut encoded_batch, record)?;
+            let encoded = if let Some(context) = &self.encryption {
+                encode_encrypted_wal_record(context, sequence, record)?
+            } else {
+                encode_wal_record(record)?
+            };
+            encoded_batch.extend_from_slice(&encoded);
+            if self.encryption.is_some() {
+                sequence = sequence.checked_add(1).ok_or_else(|| {
+                    VdbError::Encryption("encrypted WAL sequence exhausted".to_string())
+                })?;
+            }
         }
         let mut wal = self.wal.lock();
         let wal = wal.as_mut().ok_or(VdbError::StorageUnavailable)?;
@@ -842,6 +988,9 @@ impl VdbStore {
             return Err(error.into());
         }
         *self.state.write() = staged_state;
+        if self.encryption.is_some() {
+            *self.next_sequence.lock() = sequence;
+        }
         Ok(records.len())
     }
 
@@ -876,6 +1025,11 @@ impl VdbStore {
             sha256: format!("{digest:x}"),
             bytes: bytes.len() as u64,
             created_at: Utc::now(),
+            encrypted: self.encryption.is_some(),
+            key_id: self
+                .encryption
+                .as_ref()
+                .map(|context| hex_bytes(&context.key_id)),
         };
         let manifest_path = PathBuf::from(format!("{}.manifest.json", destination.display()));
         let manifest_bytes = serde_json::to_vec_pretty(&manifest)
@@ -885,6 +1039,13 @@ impl VdbStore {
     }
 
     pub fn verify_backup(destination: impl AsRef<Path>) -> Result<Health, VdbError> {
+        Self::verify_backup_with_key(destination, None)
+    }
+
+    pub fn verify_backup_with_key(
+        destination: impl AsRef<Path>,
+        key: Option<EncryptionKey>,
+    ) -> Result<Health, VdbError> {
         let destination = destination.as_ref();
         reject_symlink(destination)?;
         let bytes = fs::read(destination)?;
@@ -903,13 +1064,25 @@ impl VdbStore {
                 "backup checksum or size does not match manifest".to_string(),
             ));
         }
-        let restored = VdbStore::open(destination)?;
+        let options = VdbOptions {
+            encryption_key: key,
+            ..VdbOptions::default()
+        };
+        let restored = VdbStore::open_with_options(destination, options)?;
         Ok(restored.health())
     }
 
     pub fn restore_backup(
         source: impl AsRef<Path>,
         destination: impl AsRef<Path>,
+    ) -> Result<Health, VdbError> {
+        Self::restore_backup_with_key(source, destination, None)
+    }
+
+    pub fn restore_backup_with_key(
+        source: impl AsRef<Path>,
+        destination: impl AsRef<Path>,
+        key: Option<EncryptionKey>,
     ) -> Result<Health, VdbError> {
         let source = source.as_ref().to_path_buf();
         let destination = destination.as_ref().to_path_buf();
@@ -943,7 +1116,13 @@ impl VdbStore {
             fs::create_dir_all(parent)?;
         }
         write_secure_file(&destination, &bytes)?;
-        let restored = VdbStore::open(&destination)?;
+        let restored = VdbStore::open_with_options(
+            &destination,
+            VdbOptions {
+                encryption_key: key,
+                ..VdbOptions::default()
+            },
+        )?;
         let health = restored.health();
         drop(restored);
         let destination_manifest = BackupManifest {
@@ -952,6 +1131,8 @@ impl VdbStore {
             sha256: source_manifest.sha256,
             bytes: source_manifest.bytes,
             created_at: Utc::now(),
+            encrypted: source_manifest.encrypted,
+            key_id: source_manifest.key_id.clone(),
         };
         let manifest_bytes = serde_json::to_vec_pretty(&destination_manifest)
             .map_err(|error| VdbError::Serialization(error.to_string()))?;
@@ -981,7 +1162,12 @@ impl VdbStore {
     fn append(&self, record: &WalRecord) -> Result<(), VdbError> {
         let mut wal = self.wal.lock();
         let wal = wal.as_mut().ok_or(VdbError::StorageUnavailable)?;
-        let encoded = encode_wal_record(record)?;
+        let mut sequence = self.next_sequence.lock();
+        let encoded = if let Some(context) = &self.encryption {
+            encode_encrypted_wal_record(context, *sequence, record)?
+        } else {
+            encode_wal_record(record)?
+        };
         let current = wal.metadata()?.len();
         let requested = encoded.len() as u64;
         if current.saturating_add(requested) > self.max_wal_bytes {
@@ -993,6 +1179,11 @@ impl VdbStore {
         }
         wal.write_all(&encoded)?;
         wal.sync_all()?;
+        if self.encryption.is_some() {
+            *sequence = sequence.checked_add(1).ok_or_else(|| {
+                VdbError::Encryption("encrypted WAL sequence exhausted".to_string())
+            })?;
+        }
         Ok(())
     }
 }
@@ -1042,6 +1233,21 @@ fn acquire_instance_lock(lock_path: &Path) -> Result<File, VdbError> {
     Ok(file)
 }
 
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn read_format_version(path: &Path) -> Result<u16, VdbError> {
+    let mut file = File::open(path)?;
+    let mut header = [0u8; FILE_HEADER_LEN];
+    file.read_exact(&mut header)
+        .map_err(|_| VdbError::UnsupportedFormat)?;
+    if &header[..4] != FILE_MAGIC {
+        return Err(VdbError::UnsupportedFormat);
+    }
+    Ok(u16::from_le_bytes([header[4], header[5]]))
+}
+
 fn ensure_header(path: &Path) -> Result<(), VdbError> {
     if !path.exists() || fs::metadata(path)?.len() == 0 {
         let mut options = OpenOptions::new();
@@ -1063,6 +1269,118 @@ fn ensure_header(path: &Path) -> Result<(), VdbError> {
         return Err(VdbError::UnsupportedFormat);
     }
     Ok(())
+}
+
+fn create_encrypted_header(path: &Path, key: EncryptionKey) -> Result<EncryptionContext, VdbError> {
+    if path.exists() && fs::metadata(path)?.len() != 0 {
+        return Err(VdbError::UnsupportedFormat);
+    }
+    let key_id =
+        crypto::random_key_id().map_err(|error| VdbError::Encryption(error.to_string()))?;
+    let nonce_prefix =
+        crypto::random_nonce_prefix().map_err(|error| VdbError::Encryption(error.to_string()))?;
+    let context = EncryptionContext {
+        key,
+        key_id,
+        nonce_prefix,
+    };
+    let header = encrypted_header_bytes(&context)?;
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    secure_create_options(&mut options);
+    let mut file = options.open(path)?;
+    file.write_all(&header)?;
+    file.sync_all()?;
+    sync_parent_directory(path)?;
+    Ok(context)
+}
+
+fn encrypted_header_bytes(context: &EncryptionContext) -> Result<Vec<u8>, VdbError> {
+    let mut header = Vec::with_capacity(ENCRYPTED_HEADER_LEN);
+    header.extend_from_slice(FILE_MAGIC);
+    header.extend_from_slice(&ENCRYPTED_FORMAT_VERSION.to_le_bytes());
+    header.push(crypto::ENCRYPTION_SUITE_AES_256_GCM);
+    header.extend_from_slice(&context.key_id);
+    header.extend_from_slice(&context.nonce_prefix);
+    let tag = crypto::authenticate_header(
+        &context.key,
+        &context.key_id,
+        &context.nonce_prefix,
+        &header,
+    )
+    .map_err(|error| VdbError::Encryption(error.to_string()))?;
+    header.extend_from_slice(&tag);
+    if header.len() != ENCRYPTED_HEADER_LEN {
+        return Err(VdbError::UnsupportedFormat);
+    }
+    Ok(header)
+}
+
+fn read_encrypted_context(path: &Path, key: EncryptionKey) -> Result<EncryptionContext, VdbError> {
+    let mut file = File::open(path)?;
+    let mut header = [0u8; ENCRYPTED_HEADER_LEN];
+    file.read_exact(&mut header)
+        .map_err(|_| VdbError::UnsupportedFormat)?;
+    if &header[..4] != FILE_MAGIC
+        || u16::from_le_bytes([header[4], header[5]]) != ENCRYPTED_FORMAT_VERSION
+        || header[6] != crypto::ENCRYPTION_SUITE_AES_256_GCM
+    {
+        return Err(VdbError::UnsupportedFormat);
+    }
+    let mut key_id = [0u8; crypto::KEY_ID_BYTES];
+    key_id.copy_from_slice(&header[7..7 + crypto::KEY_ID_BYTES]);
+    let nonce_start = 7 + crypto::KEY_ID_BYTES;
+    let mut nonce_prefix = [0u8; crypto::NONCE_PREFIX_BYTES];
+    nonce_prefix.copy_from_slice(&header[nonce_start..nonce_start + crypto::NONCE_PREFIX_BYTES]);
+    let tag_start = nonce_start + crypto::NONCE_PREFIX_BYTES;
+    let mut tag = [0u8; crypto::AUTH_TAG_BYTES];
+    tag.copy_from_slice(&header[tag_start..]);
+    crypto::verify_header(&key, &key_id, &nonce_prefix, &header[..tag_start], &tag)
+        .map_err(|error| VdbError::Encryption(error.to_string()))?;
+    Ok(EncryptionContext {
+        key,
+        key_id,
+        nonce_prefix,
+    })
+}
+
+fn encrypted_record_aad(key_id: &[u8; crypto::KEY_ID_BYTES], sequence: u64) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(4 + 2 + crypto::KEY_ID_BYTES + 8);
+    aad.extend_from_slice(FILE_MAGIC);
+    aad.extend_from_slice(&ENCRYPTED_FORMAT_VERSION.to_le_bytes());
+    aad.extend_from_slice(key_id);
+    aad.extend_from_slice(&sequence.to_be_bytes());
+    aad
+}
+
+fn encode_encrypted_wal_record(
+    context: &EncryptionContext,
+    sequence: u64,
+    record: &WalRecord,
+) -> Result<Vec<u8>, VdbError> {
+    let mut plaintext = Vec::new();
+    ciborium::ser::into_writer(record, &mut plaintext)
+        .map_err(|error| VdbError::Serialization(error.to_string()))?;
+    let aad = encrypted_record_aad(&context.key_id, sequence);
+    let ciphertext = crypto::encrypt_record(
+        &context.key,
+        &context.key_id,
+        &context.nonce_prefix,
+        sequence,
+        &aad,
+        &plaintext,
+    )
+    .map_err(|error| VdbError::Encryption(error.to_string()))?;
+    if ciphertext.len() > MAX_WAL_RECORD_BYTES {
+        return Err(VdbError::InvalidDocument(
+            "encrypted WAL record is too large".to_string(),
+        ));
+    }
+    let mut encoded = Vec::with_capacity(4 + 8 + ciphertext.len());
+    encoded.extend_from_slice(&(ciphertext.len() as u32).to_le_bytes());
+    encoded.extend_from_slice(&sequence.to_be_bytes());
+    encoded.extend_from_slice(&ciphertext);
+    Ok(encoded)
 }
 
 fn encode_wal_record(record: &WalRecord) -> Result<Vec<u8>, VdbError> {
@@ -1311,6 +1629,10 @@ fn is_supported_format_version(version: u16) -> bool {
     (MIN_SUPPORTED_FORMAT_VERSION..=FORMAT_VERSION).contains(&version)
 }
 
+fn is_supported_format_version_with_encryption(version: u16) -> bool {
+    (MIN_SUPPORTED_FORMAT_VERSION..=ENCRYPTED_FORMAT_VERSION).contains(&version)
+}
+
 fn validate_wal_record(record: &WalRecord, max_document_bytes: usize) -> Result<(), VdbError> {
     match record {
         WalRecord::CreateCollection { name } => validate_collection(name),
@@ -1419,7 +1741,8 @@ fn replay_wal(
     max_document_bytes: usize,
     max_documents: usize,
     max_payload_bytes: u64,
-) -> Result<State, VdbError> {
+    encryption: Option<&EncryptionContext>,
+) -> Result<(State, u64), VdbError> {
     let file_length = fs::metadata(path)?.len();
     let mut reader = BufReader::new(File::open(path)?);
     let mut header = [0u8; FILE_HEADER_LEN];
@@ -1427,9 +1750,25 @@ fn replay_wal(
         .read_exact(&mut header)
         .map_err(|_| VdbError::UnsupportedFormat)?;
     let format_version = u16::from_le_bytes([header[4], header[5]]);
-    if &header[..4] != FILE_MAGIC || !is_supported_format_version(format_version) {
+    if &header[..4] != FILE_MAGIC || !is_supported_format_version_with_encryption(format_version) {
         return Err(VdbError::UnsupportedFormat);
     }
+    let encrypted = format_version == ENCRYPTED_FORMAT_VERSION;
+    if encrypted != encryption.is_some() {
+        return Err(VdbError::Encryption(
+            "encrypted format requires an encryption key".to_string(),
+        ));
+    }
+    let mut valid_end = if encrypted {
+        let mut encrypted_header = [0u8; ENCRYPTED_HEADER_LEN - FILE_HEADER_LEN];
+        reader
+            .read_exact(&mut encrypted_header)
+            .map_err(|_| VdbError::UnsupportedFormat)?;
+        ENCRYPTED_HEADER_LEN as u64
+    } else {
+        FILE_HEADER_LEN as u64
+    };
+    let mut sequence = 1u64;
     let mut state = State {
         collections: HashMap::new(),
         index_fields: HashMap::new(),
@@ -1437,7 +1776,6 @@ fn replay_wal(
         document_count: 0,
         payload_bytes: 0,
     };
-    let mut valid_end = FILE_HEADER_LEN as u64;
     loop {
         let mut length_bytes = [0u8; 4];
         match reader.read_exact(&mut length_bytes) {
@@ -1451,24 +1789,60 @@ fn replay_wal(
                 "WAL record length {length} exceeds the {MAX_WAL_RECORD_BYTES} byte limit"
             )));
         }
-        let mut payload = vec![0u8; length];
-        match reader.read_exact(&mut payload) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(error) => return Err(error.into()),
-        }
-        let mut expected_checksum = [0u8; 32];
-        match reader.read_exact(&mut expected_checksum) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(error) => return Err(error.into()),
-        }
-        let actual_checksum = Sha256::digest(&payload);
-        if expected_checksum != actual_checksum.as_slice() {
-            return Err(VdbError::Serialization(
-                "WAL checksum mismatch; storage recovery is required".to_string(),
-            ));
-        }
+        let (payload, record_bytes) = if let Some(context) = encryption {
+            let mut sequence_bytes = [0u8; 8];
+            match reader.read_exact(&mut sequence_bytes) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(error) => return Err(error.into()),
+            }
+            let record_sequence = u64::from_be_bytes(sequence_bytes);
+            if record_sequence != sequence {
+                return Err(VdbError::Encryption(
+                    "encrypted WAL sequence is invalid".to_string(),
+                ));
+            }
+            let mut ciphertext = vec![0u8; length];
+            match reader.read_exact(&mut ciphertext) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(error) => return Err(error.into()),
+            }
+            let aad = encrypted_record_aad(&context.key_id, record_sequence);
+            let plaintext = crypto::decrypt_record(
+                &context.key,
+                &context.key_id,
+                &context.nonce_prefix,
+                record_sequence,
+                &aad,
+                &ciphertext,
+            )
+            .map_err(|error| VdbError::Encryption(error.to_string()))?;
+            sequence = sequence.checked_add(1).ok_or_else(|| {
+                VdbError::Encryption("encrypted WAL sequence exhausted".to_string())
+            })?;
+            (plaintext, 4 + 8 + length)
+        } else {
+            let mut payload = vec![0u8; length];
+            match reader.read_exact(&mut payload) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(error) => return Err(error.into()),
+            }
+            let mut expected_checksum = [0u8; 32];
+            match reader.read_exact(&mut expected_checksum) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(error) => return Err(error.into()),
+            }
+            let actual_checksum = Sha256::digest(&payload);
+            if expected_checksum != actual_checksum.as_slice() {
+                return Err(VdbError::Serialization(
+                    "WAL checksum mismatch; storage recovery is required".to_string(),
+                ));
+            }
+            (payload, 4 + length + 32)
+        };
         let record: WalRecord = ciborium::de::from_reader(payload.as_slice())
             .map_err(|error| VdbError::Serialization(error.to_string()))?;
         validate_wal_record(&record, max_document_bytes)?;
@@ -1479,7 +1853,7 @@ fn replay_wal(
             max_documents,
             max_payload_bytes,
         )?;
-        valid_end += (4 + length + 32) as u64;
+        valid_end += record_bytes as u64;
     }
     if valid_end < file_length {
         let file = OpenOptions::new().write(true).open(path)?;
@@ -1487,7 +1861,7 @@ fn replay_wal(
         file.sync_all()?;
     }
     rebuild_indexes(&mut state);
-    Ok(state)
+    Ok((state, sequence))
 }
 
 fn apply_record(
@@ -2582,5 +2956,125 @@ mod tests {
             store.query("events", None, 0),
             Err(VdbError::InvalidLimit)
         ));
+    }
+}
+
+#[cfg(test)]
+mod encrypted_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn key(seed: u8) -> EncryptionKey {
+        EncryptionKey::from_bytes([seed; crypto::KEY_BYTES])
+    }
+
+    fn encrypted_options(encryption_key: EncryptionKey) -> VdbOptions {
+        VdbOptions {
+            encryption_key: Some(encryption_key),
+            ..VdbOptions::default()
+        }
+    }
+
+    #[test]
+    fn encrypted_round_trip_hides_payload_and_reports_key_id() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("encrypted.vdb");
+        let encryption_key = key(7);
+        {
+            let store =
+                VdbStore::open_with_options(&path, encrypted_options(encryption_key.clone()))
+                    .unwrap();
+            store.create_collection("secrets").unwrap();
+            store
+                .put(
+                    "secrets",
+                    "s1",
+                    serde_json::json!({"value": "confidential-value"}),
+                    None,
+                )
+                .unwrap();
+            let health = store.health();
+            assert!(health.encrypted);
+            assert!(health.key_id.is_some());
+        }
+        let bytes = fs::read(&path).unwrap();
+        assert!(!bytes
+            .windows(b"confidential-value".len())
+            .any(|window| window == b"confidential-value"));
+        let reopened =
+            VdbStore::open_with_options(&path, encrypted_options(encryption_key)).unwrap();
+        assert_eq!(
+            reopened.get("secrets", "s1").unwrap().data,
+            serde_json::json!({"value": "confidential-value"})
+        );
+    }
+
+    #[test]
+    fn encrypted_open_rejects_missing_or_wrong_key() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("encrypted.vdb");
+        let store = VdbStore::open_with_options(&path, encrypted_options(key(1))).unwrap();
+        drop(store);
+        assert!(matches!(
+            VdbStore::open(&path),
+            Err(VdbError::Encryption(_))
+        ));
+        assert!(matches!(
+            VdbStore::open_with_options(&path, encrypted_options(key(2))),
+            Err(VdbError::Encryption(_))
+        ));
+    }
+
+    #[test]
+    fn encrypted_tampering_fails_authentication() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("encrypted.vdb");
+        let store = VdbStore::open_with_options(&path, encrypted_options(key(3))).unwrap();
+        store.create_collection("secrets").unwrap();
+        store
+            .put("secrets", "s1", serde_json::json!({"value": "x"}), None)
+            .unwrap();
+        drop(store);
+        let mut bytes = fs::read(&path).unwrap();
+        let offset = ENCRYPTED_HEADER_LEN + 4 + 8 + 1;
+        bytes[offset] ^= 0x01;
+        fs::write(&path, bytes).unwrap();
+        assert!(matches!(
+            VdbStore::open_with_options(&path, encrypted_options(key(3))),
+            Err(VdbError::Encryption(_))
+        ));
+    }
+
+    #[test]
+    fn encrypted_backup_restore_and_compaction_preserve_data() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("encrypted.vdb");
+        let backup = directory.path().join("encrypted-backup.vdb");
+        let restored = directory.path().join("restored/encrypted.vdb");
+        let encryption_key = key(4);
+        let store =
+            VdbStore::open_with_options(&path, encrypted_options(encryption_key.clone())).unwrap();
+        store.create_collection("notes").unwrap();
+        store
+            .put("notes", "n1", serde_json::json!({"text": "hello"}), None)
+            .unwrap();
+        store.backup(&backup).unwrap();
+        assert_eq!(
+            VdbStore::verify_backup_with_key(&backup, Some(encryption_key.clone()))
+                .unwrap()
+                .documents,
+            1
+        );
+        let before = store.health().wal_bytes;
+        store.compact().unwrap();
+        assert!(store.health().wal_bytes < before);
+        drop(store);
+        let health =
+            VdbStore::restore_backup_with_key(&backup, &restored, Some(encryption_key.clone()))
+                .unwrap();
+        assert!(health.encrypted);
+        let reopened =
+            VdbStore::open_with_options(&restored, encrypted_options(encryption_key)).unwrap();
+        assert_eq!(reopened.get("notes", "n1").unwrap().data["text"], "hello");
     }
 }
