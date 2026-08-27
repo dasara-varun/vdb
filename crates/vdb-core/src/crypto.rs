@@ -1,4 +1,4 @@
-use aes_gcm::aead::{Aead, KeyInit, OsRng};
+use aes_gcm::aead::{consts::U12, Aead, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm, Nonce};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -99,7 +99,7 @@ pub fn random_nonce_prefix() -> Result<[u8; NONCE_PREFIX_BYTES], CryptoError> {
     Ok(prefix)
 }
 
-fn nonce(prefix: &[u8; NONCE_PREFIX_BYTES], sequence: u64) -> Nonce {
+fn nonce(prefix: &[u8; NONCE_PREFIX_BYTES], sequence: u64) -> Nonce<U12> {
     let mut bytes = [0u8; NONCE_BYTES];
     bytes[..NONCE_PREFIX_BYTES].copy_from_slice(prefix);
     bytes[NONCE_PREFIX_BYTES..].copy_from_slice(&sequence.to_be_bytes());
