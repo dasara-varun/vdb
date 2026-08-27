@@ -7,8 +7,9 @@ use clap::{Parser, Subcommand};
 use serde_json::{Map, Value};
 use std::path::PathBuf;
 use vdb_core::{
-    VdbOptions, VdbStore, DEFAULT_MAX_DOCUMENTS, DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_MAX_WAL_BYTES,
-    MAX_CONFIGURED_DOCUMENTS, MAX_CONFIGURED_PAYLOAD_BYTES, MAX_CONFIGURED_WAL_BYTES,
+    EncryptionKey, VdbOptions, VdbStore, DEFAULT_MAX_DOCUMENTS, DEFAULT_MAX_PAYLOAD_BYTES,
+    DEFAULT_MAX_WAL_BYTES, MAX_CONFIGURED_DOCUMENTS, MAX_CONFIGURED_PAYLOAD_BYTES,
+    MAX_CONFIGURED_WAL_BYTES,
 };
 
 fn parse_max_documents(value: &str) -> Result<usize, String> {
@@ -29,6 +30,12 @@ fn parse_max_documents(value: &str) -> Result<usize, String> {
 struct Cli {
     #[arg(long, default_value = "vdb.vdb", global = true)]
     path: PathBuf,
+    #[arg(
+        long,
+        global = true,
+        help = "External 32-byte key file for encrypted databases"
+    )]
+    key_file: Option<PathBuf>,
     #[arg(
         long,
         default_value_t = DEFAULT_MAX_WAL_BYTES,
@@ -59,6 +66,9 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Keygen {
+        destination: PathBuf,
+    },
     Init,
     Collections {
         #[command(subcommand)]
@@ -141,10 +151,21 @@ fn print_json<T: serde::Serialize>(value: &T) -> Result<()> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Command::Keygen { destination } = &cli.command {
+        EncryptionKey::generate_file(destination).context("generate encryption key")?;
+        return print_json(&serde_json::json!({"generated": destination}));
+    }
+    let encryption_key = cli
+        .key_file
+        .as_deref()
+        .map(EncryptionKey::load_file)
+        .transpose()
+        .context("load encryption key")?;
     let options = VdbOptions {
         max_documents: cli.max_documents,
         max_payload_bytes: cli.max_payload_bytes,
         max_wal_bytes: cli.max_wal_bytes,
+        encryption_key,
         ..VdbOptions::default()
     };
     if matches!(cli.command, Command::Init) {
@@ -159,12 +180,16 @@ fn main() -> Result<()> {
         destination,
     } = cli.command
     {
-        let health = VdbStore::restore_backup(source, destination).context("restore backup")?;
+        let health =
+            VdbStore::restore_backup_with_key(source, destination, options.encryption_key.clone())
+                .context("restore backup")?;
         return print_json(&health);
     }
 
+    let command_key = options.encryption_key.clone();
     let store = VdbStore::open_with_options(&cli.path, options).context("open VDB")?;
     match cli.command {
+        Command::Keygen { .. } => unreachable!(),
         Command::Init => unreachable!(),
         Command::Collections { command } => match command {
             CollectionCommand::List => print_json(&store.list_collections()),
@@ -248,7 +273,9 @@ fn main() -> Result<()> {
             print_json(&findings)
         }
         Command::Backup { destination } => print_json(&store.backup(destination)?),
-        Command::BackupVerify { destination } => print_json(&VdbStore::verify_backup(destination)?),
+        Command::BackupVerify { destination } => {
+            print_json(&VdbStore::verify_backup_with_key(destination, command_key)?)
+        }
         Command::Restore { .. } => unreachable!(),
         Command::Export { destination } => {
             let count = store.export_jsonl(destination)?;
