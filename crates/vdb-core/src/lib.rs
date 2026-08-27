@@ -340,7 +340,7 @@ impl VdbStore {
             restrict_file_permissions(&path)?;
             Ok(result)
         })();
-        let (format_version, encryption) = match initialization {
+        let (_format_version, encryption) = match initialization {
             Ok(result) => result,
             Err(error) => {
                 drop(lock_file);
@@ -1402,11 +1402,6 @@ fn encode_wal_record(record: &WalRecord) -> Result<Vec<u8>, VdbError> {
     encoded.extend_from_slice(&payload);
     encoded.extend_from_slice(&checksum);
     Ok(encoded)
-}
-
-fn write_wal_record(writer: &mut impl Write, record: &WalRecord) -> Result<(), VdbError> {
-    writer.write_all(&encode_wal_record(record)?)?;
-    Ok(())
 }
 
 fn validate_field(field: &str) -> Result<(), VdbError> {
