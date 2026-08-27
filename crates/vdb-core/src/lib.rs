@@ -239,8 +239,7 @@ pub struct VdbStore {
     max_documents: usize,
     max_payload_bytes: u64,
     max_wal_bytes: u64,
-    format_version: u16,
-    encryption: Option<EncryptionContext>,
+    encryption: Mutex<Option<EncryptionContext>>,
     next_sequence: Mutex<u64>,
 }
 
@@ -386,8 +385,7 @@ impl VdbStore {
             max_documents,
             max_payload_bytes,
             max_wal_bytes: options.max_wal_bytes,
-            format_version,
-            encryption,
+            encryption: Mutex::new(encryption),
             next_sequence: Mutex::new(next_sequence),
         })
     }
@@ -679,6 +677,7 @@ impl VdbStore {
 
     pub fn health(&self) -> Health {
         let state = self.state.read();
+        let encryption = self.encryption.lock();
         let payload_bytes = state.payload_bytes;
         Health {
             status: "healthy",
@@ -690,8 +689,8 @@ impl VdbStore {
             max_documents: self.max_documents,
             max_payload_bytes: self.max_payload_bytes,
             max_wal_bytes: self.max_wal_bytes,
-            encrypted: self.encryption.is_some(),
-            key_id: self.encryption.as_ref().map(|context| {
+            encrypted: encryption.is_some(),
+            key_id: encryption.as_ref().map(|context| {
                 context
                     .key_id
                     .iter()
@@ -742,7 +741,8 @@ impl VdbStore {
             std::process::id()
         ));
         reject_new_output(&temporary_path)?;
-        let target_encryption = if let Some(context) = &self.encryption {
+        let current_encryption = self.encryption.lock();
+        let target_encryption = if let Some(context) = &*current_encryption {
             Some(EncryptionContext {
                 key: context.key.clone(),
                 key_id: crypto::random_key_id()
@@ -818,7 +818,7 @@ impl VdbStore {
         let bytes = new_wal.metadata()?.len();
         *wal = Some(new_wal);
         if target_encryption.is_some() {
-            self.encryption = target_encryption;
+            *self.encryption.lock() = target_encryption;
             *self.next_sequence.lock() = sequence;
         }
         Ok(bytes)
@@ -953,14 +953,15 @@ impl VdbStore {
 
         let mut encoded_batch = Vec::new();
         let mut sequence = *self.next_sequence.lock();
+        let encryption = self.encryption.lock();
         for record in &wal_records {
-            let encoded = if let Some(context) = &self.encryption {
+            let encoded = if let Some(context) = &*encryption {
                 encode_encrypted_wal_record(context, sequence, record)?
             } else {
                 encode_wal_record(record)?
             };
             encoded_batch.extend_from_slice(&encoded);
-            if self.encryption.is_some() {
+            if encryption.is_some() {
                 sequence = sequence.checked_add(1).ok_or_else(|| {
                     VdbError::Encryption("encrypted WAL sequence exhausted".to_string())
                 })?;
@@ -988,7 +989,7 @@ impl VdbStore {
             return Err(error.into());
         }
         *self.state.write() = staged_state;
-        if self.encryption.is_some() {
+        if encryption.is_some() {
             *self.next_sequence.lock() = sequence;
         }
         Ok(records.len())
@@ -1019,18 +1020,19 @@ impl VdbStore {
         sync_parent_directory(&destination)?;
         let bytes = fs::read(&destination)?;
         let digest = Sha256::digest(&bytes);
+        let encryption = self.encryption.lock();
         let manifest = BackupManifest {
             source: self.path.display().to_string(),
             destination: destination.display().to_string(),
             sha256: format!("{digest:x}"),
             bytes: bytes.len() as u64,
             created_at: Utc::now(),
-            encrypted: self.encryption.is_some(),
-            key_id: self
-                .encryption
+            encrypted: encryption.is_some(),
+            key_id: encryption
                 .as_ref()
                 .map(|context| hex_bytes(&context.key_id)),
         };
+        drop(encryption);
         let manifest_path = PathBuf::from(format!("{}.manifest.json", destination.display()));
         let manifest_bytes = serde_json::to_vec_pretty(&manifest)
             .map_err(|error| VdbError::Serialization(error.to_string()))?;
@@ -1163,7 +1165,8 @@ impl VdbStore {
         let mut wal = self.wal.lock();
         let wal = wal.as_mut().ok_or(VdbError::StorageUnavailable)?;
         let mut sequence = self.next_sequence.lock();
-        let encoded = if let Some(context) = &self.encryption {
+        let encryption = self.encryption.lock();
+        let encoded = if let Some(context) = &*encryption {
             encode_encrypted_wal_record(context, *sequence, record)?
         } else {
             encode_wal_record(record)?
@@ -1179,7 +1182,7 @@ impl VdbStore {
         }
         wal.write_all(&encoded)?;
         wal.sync_all()?;
-        if self.encryption.is_some() {
+        if encryption.is_some() {
             *sequence = sequence.checked_add(1).ok_or_else(|| {
                 VdbError::Encryption("encrypted WAL sequence exhausted".to_string())
             })?;
