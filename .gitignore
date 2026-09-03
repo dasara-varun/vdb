@@ -1,4 +1,6 @@
 /target/
+/target-*/
+
 *.vdb
 *.vdb-wal
 *.manifest.json

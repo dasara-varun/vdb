@@ -25,13 +25,17 @@ required_files=(
   "docs/templates/decision-record.md"
   "docs/templates/progress-update.md"
   "docs/templates/research-note.md"
+  "docs/templates/acceptance-checklist.md"
   "docs/data-format.md"
   "docs/operations.md"
   "docs/security.md"
   "docs/testing.md"
   "docs/roadmap.md"
   "docs/production-gap-audit.md"
+  "docs/orchestration.md"
+  "docs/decisions/0004-parallel-worktree-orchestration.md"
 )
+
 
 for path in "${required_files[@]}"; do
   if [[ ! -f "$path" ]]; then

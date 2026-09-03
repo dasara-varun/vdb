@@ -19,6 +19,7 @@ This directory is the project’s durable knowledge base. It explains what VDB i
 | Update project knowledge | [`documentation-maintenance.md`](documentation-maintenance.md) | [`project-status.md`](project-status.md), [`templates/progress-update.md`](templates/progress-update.md) |
 | Use Claude Code tooling safely | [`agent-tooling.md`](agent-tooling.md) | [`loop-engineering.md`](loop-engineering.md), `AGENTS.md` |
 | Design a bounded continuation loop | [`loop-engineering.md`](loop-engineering.md) | [`agent-tooling.md`](agent-tooling.md), `production-gap-audit.md` |
+| Coordinate parallel multi-agent work | [`orchestration.md`](orchestration.md) | [`loop-engineering.md`](loop-engineering.md), [`decisions/0004-parallel-worktree-orchestration.md`](decisions/0004-parallel-worktree-orchestration.md) |
 
 ## Source-of-truth map
 
@@ -66,8 +67,10 @@ This directory is the project’s durable knowledge base. It explains what VDB i
 | [`security.md`](security.md) | Security, privacy, and AI threat model |
 | [`steward.md`](steward.md) | Constrained/read-only Steward specification |
 | [`testing.md`](testing.md) | Reliability, adversarial, crash, and release testing |
-| [`decisions/`](decisions/) | Accepted architectural decision records, including [`ADR-0002`](decisions/0002-loopback-read-only-gui.md) for the GUI boundary |
-| [`templates/`](templates/) | Templates for decisions, progress updates, and research notes |
+| [`orchestration.md`](orchestration.md) | Parallel worktree multi-agent orchestration and local gating rules |
+| [`decisions/`](decisions/) | Accepted architectural decision records, including [`ADR-0002`](decisions/0002-loopback-read-only-gui.md) and [`ADR-0004`](decisions/0004-parallel-worktree-orchestration.md) |
+| [`templates/`](templates/) | Templates for decisions, progress updates, research notes, and acceptance checklists |
+
 
 ## How to use this index
 

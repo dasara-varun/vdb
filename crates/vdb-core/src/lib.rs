@@ -1305,6 +1305,10 @@ fn secure_create_options(options: &mut OpenOptions) {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
+    #[cfg(not(unix))]
+    {
+        let _ = options;
+    }
 }
 
 fn is_supported_format_version(version: u16) -> bool {
