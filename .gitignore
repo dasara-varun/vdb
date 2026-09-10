@@ -6,3 +6,5 @@
 *.manifest.json
 .DS_Store
 .env
+
+/.cargo/
