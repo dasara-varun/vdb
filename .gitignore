@@ -1,5 +1,7 @@
 /target/
 /target-*/
+/.worktrees/
+
 
 *.vdb
 *.vdb-wal
